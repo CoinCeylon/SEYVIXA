@@ -27,6 +27,16 @@ The database is on `internal_net` and the implicit default network (so the host 
 
 Check the database: `docker compose exec db pg_isready -U seyvixa` (use the `POSTGRES_USER` value from your `.env`).
 
+## Migrations (T0.2b)
+
+With the database running and `.env` in place:
+
+```
+pnpm migrate
+```
+
+This applies the SQL files in `apps/api/migrations/` in filename order, each in its own transaction, and records them in `schema_migrations`. A second run applies nothing. It reads `DATABASE_URL` from `.env` and works on Windows and Linux. It needs Postgres 13 or newer.
+
 ## Layout
 
 `apps/` (api, web), `services/` (connectors, agents, chain, budget), `contracts/` (cardano, midnight), `packages/shared/`, `tools/verifier/`, `keys/` (public keys only), `docs/`.
