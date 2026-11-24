@@ -1,3 +1,13 @@
+# T0.2a: PostgreSQL plus two networks (Blueprint Section 6.2 and Section 9 item 1).
+#
+# agent_net:    the only network the agent runtime may join.
+# internal_net: internal: true. Only the gateway and the connector services share it.
+#               It has no route to the host or the internet. The connectors service
+#               arrives in T1.4 and joins this network; do not publish its port.
+#
+# The database is not on agent_net, so an agent container cannot reach it.
+# It sits on internal_net for the gateway and connectors, and on the implicit default
+# network so the host can reach it on POSTGRES_PORT during local development.
 services:
   db:
     image: postgres:18.7-alpine
@@ -9,6 +19,14 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
+    networks:
+      - default
+      - internal_net
+
+networks:
+  agent_net: {}
+  internal_net:
+    internal: true
 
 volumes:
   pgdata:
