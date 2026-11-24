@@ -1,7 +1,8 @@
 // T0.2b (decision D25): apply the plain SQL files in apps/api/migrations in filename order.
 // Each file runs in its own transaction, so a file must not contain its own COMMIT or
 // statements that cannot run in a transaction (such as CREATE INDEX CONCURRENTLY).
-// Use a direct connection (the advisory lock is per session, not safe behind a transaction pooler). schema_migrations is bookkeeping, not a product table.
+// Use a direct connection (the advisory lock is per session, not safe behind a transaction pooler).
+// schema_migrations is bookkeeping, not a product table.
 // A second run applies nothing. Reads DATABASE_URL (see .env.example).
 import { readdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
