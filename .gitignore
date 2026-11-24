@@ -1,0 +1,34 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.skey
+*.key
+*.pem
+*private*
+seed*.txt
+mnemonic*
+
+# dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# local data and logs
+pgdata/
+*.log
+
+# editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local-only docs (everything except docs/VERSIONS.md is not committed)
+CLAUDE.md
+docs/*
+!docs/VERSIONS.md
