@@ -1,6 +1,8 @@
 // T0.3b: one schema and type per Blueprint Section 8 table (plus suppliers, from the additive
 // note), matching apps/api/migrations/0001_init.sql. Column names are snake_case as in the database.
 // Nullable columns are .nullable(): the database returns null, not a missing key.
+// These schemas describe the JSON form of a row: timestamps are ISO strings and amounts are
+// decimal strings. node-postgres returns timestamptz as a JS Date, so convert before parsing.
 import { z } from "zod";
 import {
   actionStatusSchema,
@@ -13,6 +15,7 @@ import {
 import {
   idSchema,
   lkrAmountSchema,
+  positiveLkrAmountSchema,
   sha256HexSchema,
   textSchema,
   timestampSchema,
@@ -77,7 +80,7 @@ export const budgetReservationSchema = z.strictObject({
   id: idSchema,
   procurement_id: idSchema,
   agent_id: idSchema,
-  amount: lkrAmountSchema,
+  amount: positiveLkrAmountSchema,
   status: reservationStatusSchema,
   idempotency_key: textSchema,
 });

@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { ZodType } from "zod";
 import {
   ACTION_STATUSES,
@@ -114,8 +115,28 @@ for (const [name, schema, valid, invalid] of cases) {
   });
 }
 
-test("every Section 8 table and suppliers has a schema (13)", () => {
+// Pin every table schema to the migration: same table list, same column names.
+test("each schema has exactly the columns of its table in 0001_init.sql", () => {
+  const sql = readFileSync(new URL("../../../apps/api/migrations/0001_init.sql", import.meta.url), "utf8");
+  const tables = new Map<string, string[]>();
+  for (const m of sql.matchAll(/CREATE TABLE (\w+) \(([\s\S]*?)\n\);/g)) {
+    const cols = [...m[2]!.matchAll(/^ {2}([a-z_]+)\s+(?:uuid|text|numeric|timestamptz|jsonb)/gm)].map((c) => c[1]!);
+    tables.set(m[1]!, cols);
+  }
   assert.equal(cases.length, 13);
+  assert.equal(tables.size, 13);
+  for (const [name, schema] of cases) {
+    const shape = (schema as unknown as { shape: Record<string, unknown> }).shape;
+    assert.deepEqual(Object.keys(shape).sort(), [...tables.get(name)!].sort(), name);
+  }
+});
+
+test("LKR amounts: zero and leading zeros are not valid reservation amounts", () => {
+  const base = { id: ID1, procurement_id: ID2, agent_id: ID3, status: "RESERVED", idempotency_key: "k" };
+  assert.equal(budgetReservationSchema.safeParse({ ...base, amount: "0" }).success, false);
+  assert.equal(budgetReservationSchema.safeParse({ ...base, amount: "0.00" }).success, false);
+  assert.equal(budgetReservationSchema.safeParse({ ...base, amount: "00" }).success, false);
+  assert.equal(budgetReservationSchema.safeParse({ ...base, amount: "0.01" }).success, true);
 });
 
 test("reason codes are exactly the D4 list, 22 codes, no extras", () => {
@@ -169,7 +190,7 @@ test("a valid action payload hashes the same whatever the key order", () => {
   assert.equal(actionHash(payload), actionHash(reversed));
 });
 
-test("gateway request: valid passes; agent-controlled hash, ticket and ids are rejected", () => {
+test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at top level and in parameters", () => {
   const req = { tool: "FILE_READ", resource: "payroll.csv", parameters: { path: "payroll.csv" } };
   assert.equal(gatewayRequestSchema.safeParse(req).success, true);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, action_hash: HASH }).success, false);
@@ -177,6 +198,11 @@ test("gateway request: valid passes; agent-controlled hash, ticket and ids are r
   assert.equal(gatewayRequestSchema.safeParse({ ...req, owner_id: ID1 }).success, false);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, agent_id: ID1 }).success, false);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, tool: "BUDGET_RESERVE" }).success, false);
+  // The same keys are refused inside parameters too.
+  for (const key of ["agent_id", "owner_id", "action_hash", "ticket", "nonce", "expiry"]) {
+    const nested = { ...req, parameters: { [key]: "x" } };
+    assert.equal(gatewayRequestSchema.safeParse(nested).success, false, key);
+  }
 });
 
 test("gateway response: the three decisions parse; a DENY needs a D4 reason code", () => {

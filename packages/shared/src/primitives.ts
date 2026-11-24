@@ -8,7 +8,12 @@ export const idSchema = z.guid();
 export const timestampSchema = z.iso.datetime({ offset: true });
 
 /** Simulated LKR amount as a decimal string with at most 2 decimals (database numeric(14,2)). Never a float. */
-export const lkrAmountSchema = z.string().regex(/^\d{1,12}(\.\d{1,2})?$/, "LKR amount: up to 2 decimals");
+export const lkrAmountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/, "LKR amount: no leading zeros, up to 2 decimals");
+
+/** LKR amount that must be greater than zero (budget_reservations.amount has CHECK (amount > 0)). */
+export const positiveLkrAmountSchema = lkrAmountSchema.refine((v) => Number(v) > 0, "must be greater than 0");
 
 /** Test-ADA amount as a decimal string with at most 6 decimals. A separate field from LKR; never converted. */
 export const tadaAmountSchema = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/, "tADA amount: up to 6 decimals");
