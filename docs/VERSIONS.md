@@ -14,5 +14,7 @@ Checked on 2026-11-24 from the official sources below. Decision D12: Midnight, A
 | Postgres image | `postgres:18.7-alpine` | https://hub.docker.com/_/postgres |
 
 Notes:
-- Postgres 19 also exists on Docker Hub; 18.7 is pinned as the previous major (assumption, confirm with Abdul).
+- Postgres 19 also exists on Docker Hub. 18.7 is kept on purpose: the previous major, enough for everything we use.
+- Docker is not pinned (not in decision D12). Tested locally with Docker Engine 29.1.2 and Compose 2.40.3.
+- `engines.node` in the root `package.json` is a minimum (`>=26.13.1`) by design; the pinned version above is what we test with.
 - Pin exact versions in each `package.json`; no `^` ranges.

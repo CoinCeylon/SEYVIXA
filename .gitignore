@@ -5,7 +5,8 @@
 *.skey
 *.key
 *.pem
-*private*
+!keys/*.pub
+*.pub.private
 seed*.txt
 mnemonic*
 
