@@ -30,7 +30,6 @@ pgdata/
 Thumbs.db
 
 # local-only docs (everything except docs/VERSIONS.md is not committed)
-CLAUDE.md
 docs/*
 !docs/VERSIONS.md
 !docs/SEED_SPEC.md
