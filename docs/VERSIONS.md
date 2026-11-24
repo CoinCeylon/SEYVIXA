@@ -15,4 +15,5 @@ Checked on 2026-11-24 from the official sources below. Decision D12: Midnight, A
 
 Notes:
 - Postgres 19 also exists on Docker Hub; 18.7 is pinned as the previous major (assumption, confirm with Abdul).
+- Docker is not pinned (not in decision D12). Tested locally with Docker Engine 29.1.2 and Compose 2.40.3.
 - Pin exact versions in each `package.json`; no `^` ranges.
