@@ -6,9 +6,9 @@ Status: repository skeleton only. No application code yet.
 
 ## Prerequisites
 
-Pinned versions are in [docs/VERSIONS.md](docs/VERSIONS.md): Node LTS, pnpm, Docker.
+Pinned versions are in [docs/VERSIONS.md](docs/VERSIONS.md): Node LTS, pnpm, Postgres image. Docker was tested with Docker Engine 29.1.2 and Compose 2.40.3 (not pinned by the Blueprint or decision D12).
 
-## Run steps (verified)
+## Run steps
 
 ```
 pnpm install
