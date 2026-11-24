@@ -34,3 +34,6 @@ CLAUDE.md
 docs/*
 !docs/VERSIONS.md
 !docs/SEED_SPEC.md
+!docs/AI_CONTEXT.md
+!docs/blueprint-v4.4.md
+!docs/guide.md
