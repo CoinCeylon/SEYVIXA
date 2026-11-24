@@ -83,3 +83,55 @@ test("values that are not JSON are rejected", () => {
   assert.throws(() => canonicalize({ "\ud800": 1 }), TypeError);
   assert.throws(() => canonicalize([1, , 3]), TypeError);
 });
+
+test("values that would be dropped or computed are rejected, never skipped", () => {
+  const withSymbol = { a: 1, [Symbol("x")]: 2 };
+  assert.throws(() => canonicalize(withSymbol), TypeError);
+
+  const hidden = { a: 1 };
+  Object.defineProperty(hidden, "b", { value: 2, enumerable: false });
+  assert.throws(() => canonicalize(hidden), TypeError);
+
+  let reads = 0;
+  const getter = {
+    get a() {
+      reads += 1;
+      return reads;
+    },
+  };
+  assert.throws(() => canonicalize(getter), TypeError);
+  assert.equal(reads, 0, "a getter must never be run");
+
+  const arrayWithExtra: unknown[] & { x?: number } = [1];
+  arrayWithExtra.x = 2;
+  assert.throws(() => canonicalize(arrayWithExtra), TypeError);
+
+  class Sub extends Array {}
+  assert.throws(() => canonicalize(Sub.from([1])), TypeError);
+  assert.throws(() => canonicalize(new Proxy({ b: 1, a: 2 }, {})), TypeError);
+  assert.throws(() => canonicalize(new Proxy([1], {})), TypeError);
+});
+
+test("cycles and very deep nesting fail with TypeError", () => {
+  const cyclic: Record<string, unknown> = { a: 1 };
+  cyclic.self = cyclic;
+  assert.throws(() => canonicalize(cyclic), TypeError);
+
+  let deep: unknown = 1;
+  for (let i = 0; i < 300; i += 1) deep = [deep];
+  assert.throws(() => canonicalize(deep), TypeError);
+
+  // The same object used twice (not a cycle) is fine.
+  const shared = { x: 1 };
+  assert.equal(canonicalize({ a: shared, b: shared }), '{"a":{"x":1},"b":{"x":1}}');
+});
+
+test("__proto__ keys and null-prototype objects are handled as plain data", () => {
+  const parsed = JSON.parse('{"__proto__":1,"a":2}');
+  assert.equal(canonicalize(parsed), '{"__proto__":1,"a":2}');
+
+  const bare = Object.create(null) as Record<string, unknown>;
+  bare.b = 1;
+  bare.a = 2;
+  assert.equal(canonicalize(bare), '{"a":2,"b":1}');
+});
