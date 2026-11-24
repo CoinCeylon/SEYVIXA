@@ -12,6 +12,7 @@ Checked on 2026-11-24 from the official sources below. Decision D12: Midnight, A
 | Next.js | 16.4.6 | https://www.npmjs.com/package/next |
 | Tailwind CSS | 4.3.5 | https://www.npmjs.com/package/tailwindcss |
 | Postgres image | `postgres:18.7-alpine` | https://hub.docker.com/_/postgres |
+| @types/node (Node type definitions, type checking only) | 26.6.6 | https://www.npmjs.com/package/@types/node |
 | pg (node-postgres, used by `scripts/migrate.mjs`, D25) | 8.23.1 | https://www.npmjs.com/package/pg |
 
 Notes:
