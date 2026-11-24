@@ -33,3 +33,4 @@ Thumbs.db
 CLAUDE.md
 docs/*
 !docs/VERSIONS.md
+!docs/SEED_SPEC.md
