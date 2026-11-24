@@ -1,16 +1,16 @@
 // T0.3b: gateway evaluate request and response (shape defined minimally, decision D29).
 //
 // Request: what the agent (or the owner session) asks for. It is strict at the top level, and the
-// parameters object may not contain agent_id, owner_id, action_hash, ticket, nonce or expiry.
-// The gateway takes the caller from the
-// credential or session and computes every hash and ticket itself (Blueprint 6.1, 6.2, 6.5).
+// parameters object may not have a top-level key named agent_id, owner_id, action_hash, ticket,
+// nonce or expiry (any letter case). Nested objects are not inspected: the gateway must never
+// read identity, hash or ticket data from parameters. It takes the caller from the credential or session and computes every hash and ticket itself (Blueprint 6.1, 6.2, 6.5).
 // Response: the Blueprint Section 6.2 example denial, plus the fields the evaluate description
 // says are returned (action ID, action hash, single-use ticket).
 import { z } from "zod";
 import { actionTypeSchema, reasonCodeSchema } from "./enums.ts";
 import { idSchema, sha256HexSchema, textSchema, timestampSchema } from "./primitives.ts";
 
-// Keys an agent must never supply, even inside parameters. The gateway takes the caller from the
+// Keys an agent must never supply as a top-level key of parameters (compared in lower case). The gateway takes the caller from the
 // credential or session and builds these itself.
 export const RESERVED_PARAMETER_KEYS = [
   "agent_id",
@@ -25,8 +25,8 @@ export const gatewayRequestSchema = z.strictObject({
   tool: actionTypeSchema,
   resource: textSchema,
   parameters: z.record(z.string(), z.json()).superRefine((params, ctx) => {
-    for (const key of RESERVED_PARAMETER_KEYS) {
-      if (Object.hasOwn(params, key)) {
+    for (const key of Object.keys(params)) {
+      if ((RESERVED_PARAMETER_KEYS as readonly string[]).includes(key.toLowerCase())) {
         ctx.addIssue({ code: "custom", message: `parameters must not contain "${key}"` });
       }
     }

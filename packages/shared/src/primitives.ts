@@ -16,7 +16,25 @@ export const lkrAmountSchema = z
 export const positiveLkrAmountSchema = lkrAmountSchema.refine((v) => Number(v) > 0, "must be greater than 0");
 
 /** Test-ADA amount as a decimal string with at most 6 decimals. A separate field from LKR; never converted. */
-export const tadaAmountSchema = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/, "tADA amount: up to 6 decimals");
+export const tadaAmountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,11})(\.\d{1,6})?$/, "tADA amount: no leading zeros, up to 6 decimals");
+
+// Hashed fields (the action payload) have exactly one string form, so equal values always hash alike.
+/** LKR total in the hashed payload: always exactly 2 decimals, greater than 0. */
+export const payloadLkrAmountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,11})\.\d{2}$/, "payload LKR amount: exactly 2 decimals")
+  .refine((v) => Number(v) > 0, "must be greater than 0");
+
+/** tADA escrow amount in the hashed payload: always exactly 6 decimals, greater than 0. */
+export const payloadTadaAmountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,11})\.\d{6}$/, "payload tADA amount: exactly 6 decimals")
+  .refine((v) => Number(v) > 0, "must be greater than 0");
+
+/** Timestamp in the hashed payload: UTC with a trailing Z only, no offsets. */
+export const payloadTimestampSchema = z.iso.datetime();
 
 /** SHA-256 as lowercase hex (64 characters). */
 export const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/, "expected lowercase SHA-256 hex");

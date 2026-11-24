@@ -167,9 +167,9 @@ const payload = {
   supplier_id: ID3,
   payee_address: "addr_test1example",
   items: [{ description: "Office chair", quantity: 10 }],
-  total_lkr: "70000",
+  total_lkr: "70000.00",
   settlement_asset: "tADA",
-  escrow_amount_tada: "10",
+  escrow_amount_tada: "10.000000",
   escrow_script_address: "addr_test1script",
   refund_deadline: "2026-12-10T00:00:00Z",
   expiry: "2026-11-30T00:00:00Z",
@@ -183,6 +183,17 @@ test("action payload: valid passes; conversion, hash and unknown fields are reje
   assert.equal(actionPayloadSchema.safeParse({ ...payload, settlement_asset: "ADA" }).success, false);
   assert.equal(actionPayloadSchema.safeParse({ ...payload, total_lkr: 70000 }).success, false);
   assert.equal(actionPayloadSchema.safeParse({ ...payload, items: [] }).success, false);
+  // One string form per hashed value: zero, leading zeros, wrong decimals and offsets are refused.
+  for (const bad of [
+    { total_lkr: "70000" },
+    { total_lkr: "0.00" },
+    { escrow_amount_tada: "10" },
+    { escrow_amount_tada: "0.000000" },
+    { escrow_amount_tada: "010.000000" },
+    { expiry: "2026-11-30T05:30:00+05:30" },
+  ]) {
+    assert.equal(actionPayloadSchema.safeParse({ ...payload, ...bad }).success, false, JSON.stringify(bad));
+  }
 });
 
 test("a valid action payload hashes the same whatever the key order", () => {
@@ -190,7 +201,7 @@ test("a valid action payload hashes the same whatever the key order", () => {
   assert.equal(actionHash(payload), actionHash(reversed));
 });
 
-test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at top level and in parameters", () => {
+test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at top level and as top-level parameters keys", () => {
   const req = { tool: "FILE_READ", resource: "payroll.csv", parameters: { path: "payroll.csv" } };
   assert.equal(gatewayRequestSchema.safeParse(req).success, true);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, action_hash: HASH }).success, false);
@@ -198,7 +209,8 @@ test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at
   assert.equal(gatewayRequestSchema.safeParse({ ...req, owner_id: ID1 }).success, false);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, agent_id: ID1 }).success, false);
   assert.equal(gatewayRequestSchema.safeParse({ ...req, tool: "BUDGET_RESERVE" }).success, false);
-  // The same keys are refused inside parameters too.
+  // The same keys are refused as top-level keys of parameters, in any letter case.
+  assert.equal(gatewayRequestSchema.safeParse({ ...req, parameters: { Agent_Id: "x" } }).success, false);
   for (const key of ["agent_id", "owner_id", "action_hash", "ticket", "nonce", "expiry"]) {
     const nested = { ...req, parameters: { [key]: "x" } };
     assert.equal(gatewayRequestSchema.safeParse(nested).success, false, key);
