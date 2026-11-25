@@ -187,7 +187,18 @@ describe("agent: the resource (check 4), including payroll.csv", () => {
     assert.deepEqual(await decide(agentCall("FILE_READ", "quotes/a")), denied("RESOURCE_OUT_OF_SCOPE"));
   });
 
+  test("trailing slash, empty or dot segments cannot reach payroll.csv (review fix)", async () => {
+    await grant(["file:read", "resource:quotes/*", "resource:./*"]);
+    for (const resource of ["quotes/payroll.csv/", "quotes/payroll.csv/.", "quotes/./payroll.csv", "quotes//payroll.csv", "quotes/payroll.csv/..", "./payroll.csv/", "./payroll.csv", "quotes/x/./payroll.csv"]) {
+      assert.deepEqual(await decide(agentCall("FILE_READ", resource)), denied("RESOURCE_OUT_OF_SCOPE"), JSON.stringify(resource));
+    }
+  });
+
   test("helper functions", () => {
+    assert.equal(resourceNameIsSafe("quotes/payroll.csv/"), false);
+    assert.equal(resourceNameIsSafe("quotes/./x"), false);
+    assert.equal(isProtectedResource("quotes/payroll.csv/."), true);
+    assert.equal(isProtectedResource("a/payroll.csv/b"), true);
     assert.equal(resourceNameIsSafe("quotes/supplier-a.json"), true);
     assert.equal(resourceNameIsSafe("quotes/../x"), false);
     assert.equal(isProtectedResource("payroll.csv"), true);

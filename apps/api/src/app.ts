@@ -173,6 +173,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
       inactiveAgentId !== null
         ? { decision: "DENY", reasonCode: "AGENT_INACTIVE" }
         : await checkPolicy(db, { caller, tool, resource, parameters }, integrityKey, now());
+    // An owner caller only ever gets APPROVAL_REQUIRED or a 400 above, so a DENY always has an agent.
     const agentId = caller.kind === "agent" ? caller.agentId : null;
     await recordPolicyEvent(db, { agentId, tool, resource, result });
     request.log.info(
@@ -190,7 +191,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
       const response = gatewayResponseSchema.parse({
         decision: "DENY",
         reason_code: result.reasonCode,
-        agent_id: caller.kind === "agent" ? caller.agentId : caller.ownerId,
+        agent_id: agentId ?? "",
         requested_resource: resource,
         message: DENY_MESSAGES[result.reasonCode],
       });

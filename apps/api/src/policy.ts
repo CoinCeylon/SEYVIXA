@@ -37,21 +37,20 @@ export type PolicyResult =
 
 const deny = (reasonCode: ReasonCode): PolicyResult => ({ decision: "DENY", reasonCode });
 
-// A resource name is letters, digits and . _ / - only, with no "..", no leading "/" and no "//".
-// Anything else is out of scope, so a pattern like quotes/* cannot be walked out of with quotes/../x.
+// A resource name is letters, digits and . _ / - only. Every segment must be a real name: not empty (no "//",
+// no leading or trailing "/"), and not "." or "..". Anything else is out of scope, so a pattern like quotes/*
+// cannot be walked out of with quotes/../x, quotes/./x or quotes/x/ .
 const RESOURCE_NAME = /^[A-Za-z0-9._/-]+$/;
 
 export function resourceNameIsSafe(resource: string): boolean {
-  return (
-    RESOURCE_NAME.test(resource) && !resource.includes("..") && !resource.startsWith("/") && !resource.includes("//")
-  );
+  if (!RESOURCE_NAME.test(resource)) return false;
+  return resource.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 // payroll.csv is never reachable by an agent, whatever a grant says (defence in depth: a grant that
-// matches it cannot be created either, T1.1b). Any resource whose last segment is payroll.csv, in any letter case.
+// matches it cannot be created either, T1.1b). Checks every segment, in any letter case.
 export function isProtectedResource(resource: string): boolean {
-  const last = resource.split("/").pop() ?? "";
-  return last.toLowerCase() === PROTECTED_RESOURCE;
+  return resource.split("/").some((segment) => segment.toLowerCase() === PROTECTED_RESOURCE);
 }
 
 // Decimal LKR string to whole cents, so amounts are compared exactly and never as floats.
