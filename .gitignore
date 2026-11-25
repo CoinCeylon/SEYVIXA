@@ -1,0 +1,38 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.skey
+*.key
+*.pem
+!keys/*.pub
+*.pub.private
+seed*.txt
+mnemonic*
+
+# dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+*.tsbuildinfo
+
+# local data and logs
+pgdata/
+*.log
+
+# editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# local-only docs (everything except docs/VERSIONS.md is not committed)
+docs/*
+!docs/VERSIONS.md
+!docs/SEED_SPEC.md
+!docs/AI_CONTEXT.md
+!docs/blueprint-v4.4.md
+!docs/guide.md
