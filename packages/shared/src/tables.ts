@@ -97,18 +97,27 @@ export const approvalSchema = z.strictObject({
 });
 export type Approval = z.infer<typeof approvalSchema>;
 
-// reason_code uses the D4 list. D4 has no code for an ALLOW or APPROVAL_REQUIRED event; see D29.
-export const policyEventSchema = z.strictObject({
-  id: idSchema,
-  agent_id: idSchema.nullable(),
-  action: textSchema,
-  decision: decisionSchema,
-  reason_code: reasonCodeSchema,
-  created_at: timestampSchema,
-  procurement_id: idSchema.nullable(), // D27
-  action_id: idSchema.nullable(), // D27
-  resource: textSchema.nullable(), // D27
-});
+// reason_code: a DENY event uses the D4 list. D4 has no code for success, so an ALLOW or APPROVAL_REQUIRED
+// event stores the decision name itself (decision D36). The D4 list and the DENY response are unchanged.
+export const policyEventSchema = z
+  .strictObject({
+    id: idSchema,
+    agent_id: idSchema.nullable(),
+    action: textSchema,
+    decision: decisionSchema,
+    reason_code: z.union([reasonCodeSchema, z.literal("ALLOW"), z.literal("APPROVAL_REQUIRED")]),
+    created_at: timestampSchema,
+    procurement_id: idSchema.nullable(), // D27
+    action_id: idSchema.nullable(), // D27
+    resource: textSchema.nullable(), // D27
+  })
+  .refine(
+    (event) =>
+      event.decision === "DENY"
+        ? reasonCodeSchema.safeParse(event.reason_code).success
+        : event.reason_code === event.decision,
+    "reason_code must be a D4 code for DENY, and equal to the decision otherwise",
+  );
 export type PolicyEvent = z.infer<typeof policyEventSchema>;
 
 export const actionSchema = z.strictObject({
