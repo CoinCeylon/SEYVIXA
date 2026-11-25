@@ -14,6 +14,14 @@ Checked on 2026-11-24 from the official sources below. Decision D12: Midnight, A
 | Postgres image | `postgres:18.7-alpine` | https://hub.docker.com/_/postgres |
 | @types/node (Node type definitions, type checking only) | 26.6.6 | https://www.npmjs.com/package/@types/node |
 | pg (node-postgres, used by `scripts/migrate.mjs`, D25) | 8.23.1 | https://www.npmjs.com/package/pg |
+| Compact Devtools (`compact` CLI, T5.1) | 0.5.3 | https://docs.midnight.network |
+| Compact Toolchain (`compact compile`, Language `0.28.0`, T5.1) | 0.36.0 | https://docs.midnight.network |
+| `@midnight-ntwrk/compact-runtime` (T5.1) | 0.21.0 | https://docs.midnight.network |
+| `@midnight-ntwrk/compact-js` (T5.1) | 3.0.0 | https://docs.midnight.network |
+| `@midnight-ntwrk/midnight-js` (T5.1) | 5.0.0 | https://docs.midnight.network |
+| `@midnight-ntwrk/platform-js` (T5.1) | 3.0.0 | https://docs.midnight.network |
+| `@midnight-ntwrk/wallet-sdk` (T5.1) | 2.0.0 | https://docs.midnight.network |
+| Midnight Proof Server (`midnightntwrk/proof-server`, T5.1) | 9.0.2 | https://docs.midnight.network |
 
 Notes:
 - Postgres 19 also exists on Docker Hub. 18.7 is kept on purpose: the previous major, enough for everything we use.
