@@ -150,6 +150,16 @@ describe("POST /api/auth/login", () => {
     assert.equal((await login(server)).statusCode, 200);
   });
 
+  test("parallel wrong guesses cannot get past the lock: 5 are answered, the rest get 429", async () => {
+    const server = app();
+    const wrong = { ...OWNER_LOGIN, password: "wrong-password-123" };
+    const responses = await Promise.all(Array.from({ length: 12 }, () => login(server, wrong)));
+    const codes = responses.map((r) => r.statusCode);
+    assert.equal(codes.filter((c) => c === 401).length, 5);
+    assert.equal(codes.filter((c) => c === 429).length, 7);
+    assert.equal((await login(server)).statusCode, 429, "the right password is refused while locked");
+  });
+
   test("a success resets the failure count", async () => {
     const server = app();
     for (let round = 0; round < 3; round++) {
@@ -220,6 +230,9 @@ describe("the owner session", () => {
     // The agent token placed in the session cookie is no session either.
     const tokenAsCookie = await post(server, validBody(), agentId, { cookie: `${SESSION_COOKIE}=${agentToken}` });
     assert.equal(tokenAsCookie.statusCode, 401);
+    // Same, with the token cut to the 43-character shape of a session id, so it reaches the session store.
+    const shaped = await post(server, validBody(), agentId, { cookie: `${SESSION_COOKIE}=${agentToken.slice(4)}` });
+    assert.equal(shaped.statusCode, 401);
     assert.equal(await grantCount(), 0);
     // Control: with the owner cookie it works, and a Bearer token next to it changes nothing.
     const cookie = await logIn(server);

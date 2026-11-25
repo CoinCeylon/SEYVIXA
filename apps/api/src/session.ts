@@ -86,8 +86,10 @@ export class SessionStore {
 
   // Returns the new session id. This is the only time the id exists outside the cookie.
   create(ownerId: string): string {
+    // Drop this owner's old session and any expired session, so the map does not grow.
+    const nowMs = this.now().getTime();
     for (const [key, session] of this.sessions) {
-      if (session.ownerId === ownerId) this.sessions.delete(key);
+      if (session.ownerId === ownerId || !(session.expiresAt > nowMs)) this.sessions.delete(key);
     }
     const id = randomBytes(32).toString("base64url");
     this.sessions.set(sha256Hex(id), { ownerId, expiresAt: this.now().getTime() + this.ttlMs });
@@ -133,8 +135,11 @@ export class LoginLimiter {
     }
   }
 
+  // The login route counts every attempt as a failure before it checks the password (so parallel requests
+  // cannot slip past the lock), so a success must clear the count and any lock that attempt itself caused.
   recordSuccess(): void {
     this.failures = 0;
+    this.lockedUntil = 0;
   }
 }
 

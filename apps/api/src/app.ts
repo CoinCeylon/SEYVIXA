@@ -94,7 +94,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
     return reply.code(500).send({ error: "INTERNAL_ERROR" });
   });
 
-  // Owner login (T2.1). Not a product endpoint (Blueprint 7: login uses standard session handling).
+  // Owner login (T2.1). Not a product endpoint (Blueprint 7: login is not counted as a product API).
   // One generic 401 for every failure. Nothing from the request is logged.
   app.post("/api/auth/login", async (request, reply) => {
     reply.header("Cache-Control", "no-store");
@@ -105,10 +105,12 @@ export function buildApp(options: AppOptions): FastifyInstance {
     }
     const body = loginBody.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "INVALID_REQUEST" });
+    // Count the attempt as a failure now, before any await, so parallel requests cannot all pass the lock
+    // check above before one failure is counted. A success clears the count below.
+    limiter.recordFailure();
     const owner = await db.query("SELECT id FROM users WHERE id = $1", [demoOwnerId]);
     const ownerExists = owner.rows.length === 1;
     if (!loginMatches(ownerLogin, body.data) || !ownerExists) {
-      limiter.recordFailure();
       request.log.warn({ event: "owner_login_failed" }, "owner login failed");
       return reply.code(401).send({ error: "UNAUTHENTICATED" });
     }
