@@ -42,6 +42,8 @@ Names are fixed here. The values in `.env.example` are fake. Real local values g
 
 The seed reads the two agent credentials and the integrity key only. It never reads `DEMO_OWNER_PASSWORD`.
 
+The seed fails if an agent credential is missing, shorter than 32 characters or starts with `REPLACE_ME` (the `.env.example` placeholder). It never logs a credential or its hash. Use `credentialHashFromEnv(name, env)` from `apps/api/src/agent-auth.ts` (T1.1a): it applies these checks and returns the hash to store.
+
 ## 3. Rows
 
 ### 3.1 `users` (1 row)
@@ -61,8 +63,8 @@ The three wallet columns stay `NULL`: the owner's approval public key is registe
 
 | id | name | status | credential_hash |
 |---|---|---|---|
-| `20000000-0000-4000-8000-000000000001` | `Procurement Agent` | `active` | `sha256Hex(PROCUREMENT_AGENT_CREDENTIAL)` |
-| `20000000-0000-4000-8000-000000000002` | `Finance Agent` | `active` | `sha256Hex(FINANCE_AGENT_CREDENTIAL)` |
+| `20000000-0000-4000-8000-000000000001` | `Procurement Agent` | `ACTIVE` | `sha256Hex(PROCUREMENT_AGENT_CREDENTIAL)` |
+| `20000000-0000-4000-8000-000000000002` | `Finance Agent` | `ACTIVE` | `sha256Hex(FINANCE_AGENT_CREDENTIAL)` |
 
 ### 3.3 `agent_grants` (2 rows)
 
