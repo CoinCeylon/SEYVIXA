@@ -24,7 +24,7 @@ export const TOOL_SCOPES = [
 const RESOURCE_PREFIX = "resource:";
 // Letters, digits and . _ / - ; a "*" is allowed only as the last character.
 const RESOURCE_PATTERN = /^[A-Za-z0-9._/-]+\*?$/;
-const PROTECTED_RESOURCE = "payroll.csv";
+export const PROTECTED_RESOURCE = "payroll.csv";
 
 // True if the resource scope (for example "resource:quotes/*") covers the resource name.
 // It equals the text after the prefix, or, if it ends with "*", starts with the text before the "*".

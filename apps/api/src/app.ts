@@ -1,11 +1,18 @@
-// T1.1b and T2.1, Blueprint 6.1 and 7: the API app, owner login and POST /api/agents/:id/grants. More routes
-// arrive with their own cards. The owner comes only from the server-side session (getSessionOwnerId).
+// T1.1b, T2.1 and T1.2a, Blueprint 6.1, 6.2 and 7: the API app, owner login, POST /api/agents/:id/grants and
+// POST /api/actions/evaluate. More routes arrive with their own cards. The owner comes only from the server-side session (getSessionOwnerId).
 // Nothing in the request can name the owner, and an agent credential is never accepted here.
 import Fastify, { type FastifyInstance, type FastifyRequest } from "fastify";
 import { z } from "zod";
-import { idSchema, positiveLkrAmountSchema, timestampSchema } from "@seyvixa/shared";
-import type { Queryable } from "./agent-auth.ts";
+import {
+  gatewayRequestSchema,
+  gatewayResponseSchema,
+  idSchema,
+  positiveLkrAmountSchema,
+  timestampSchema,
+} from "@seyvixa/shared";
+import { authenticateAgent, type Queryable } from "./agent-auth.ts";
 import { API_GRANT_ISSUER, checkScopesForNewGrant, createGrant } from "./grants.ts";
+import { DENY_MESSAGES, checkPolicy, isEscrowAction, recordPolicyEvent, type PolicyResult } from "./policy.ts";
 import {
   DEMO_OWNER_ID,
   LoginLimiter,
@@ -122,6 +129,74 @@ export function buildApp(options: AppOptions): FastifyInstance {
     );
     request.log.info({ event: "owner_login", owner_id: demoOwnerId }, "owner logged in");
     return reply.code(200).send({ authenticated: true });
+  });
+
+  // Evaluate (T1.2a, Blueprint 6.2, decisions D17 and D36). The caller comes from the credential or the session,
+  // never from the body. An Authorization header means an agent; without one the owner session is used, and
+  // the owner may only ask for escrow actions. Every decision writes a policy_events row before the response.
+  // A decision is data, not an HTTP status: DENY and the others answer 200, and a client must treat anything
+  // but ALLOW as "not allowed". ALLOW and APPROVAL_REQUIRED answer 501 until the action record and ticket exist
+  // (T1.2b, T1.2c): nothing is allowed yet. Nothing from the request body is logged.
+  app.post("/api/actions/evaluate", async (request, reply) => {
+    let caller: { kind: "agent"; agentId: string } | { kind: "owner"; ownerId: string };
+    let inactiveAgentId: string | null = null;
+    if (request.headers.authorization !== undefined) {
+      const auth = await authenticateAgent(request, db);
+      if (auth.ok) caller = { kind: "agent", agentId: auth.agentId };
+      else if (auth.kind === "AGENT_INACTIVE") {
+        caller = { kind: "agent", agentId: auth.agentId };
+        inactiveAgentId = auth.agentId;
+      } else return reply.code(401).send({ error: "UNAUTHENTICATED" });
+    } else {
+      let ownerId: string | null;
+      try {
+        ownerId = await getSessionOwnerId(request);
+      } catch {
+        ownerId = null;
+      }
+      if (typeof ownerId !== "string" || ownerId === "") return reply.code(401).send({ error: "UNAUTHENTICATED" });
+      const owner = await db.query("SELECT id FROM users WHERE id = $1", [ownerId]);
+      if (owner.rows.length !== 1) return reply.code(401).send({ error: "UNAUTHENTICATED" });
+      caller = { kind: "owner", ownerId };
+    }
+
+    const body = gatewayRequestSchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "INVALID_REQUEST" });
+    const { tool, resource, parameters } = body.data;
+    // The owner session is for escrow actions only. An agent's PROPOSE_PURCHASE must carry its total.
+    if (caller.kind === "owner" && !isEscrowAction(tool)) return reply.code(400).send({ error: "INVALID_REQUEST" });
+    if (tool === "PROPOSE_PURCHASE" && !positiveLkrAmountSchema.safeParse(parameters.total_lkr).success) {
+      return reply.code(400).send({ error: "INVALID_REQUEST" });
+    }
+
+    const result: PolicyResult =
+      inactiveAgentId !== null
+        ? { decision: "DENY", reasonCode: "AGENT_INACTIVE" }
+        : await checkPolicy(db, { caller, tool, resource, parameters }, integrityKey, now());
+    const agentId = caller.kind === "agent" ? caller.agentId : null;
+    await recordPolicyEvent(db, { agentId, tool, resource, result });
+    request.log.info(
+      {
+        event: "policy_decision",
+        decision: result.decision,
+        reason_code: result.decision === "DENY" ? result.reasonCode : undefined,
+        agent_id: agentId,
+        tool,
+      },
+      "policy decision",
+    );
+
+    if (result.decision === "DENY") {
+      const response = gatewayResponseSchema.parse({
+        decision: "DENY",
+        reason_code: result.reasonCode,
+        agent_id: caller.kind === "agent" ? caller.agentId : caller.ownerId,
+        requested_resource: resource,
+        message: DENY_MESSAGES[result.reasonCode],
+      });
+      return reply.code(200).send(response);
+    }
+    return reply.code(501).send({ error: "NOT_IMPLEMENTED" });
   });
 
   app.post("/api/agents/:id/grants", async (request, reply) => {
