@@ -34,6 +34,12 @@ export const REASON_CODES = [
 export const reasonCodeSchema = z.enum(REASON_CODES);
 export type ReasonCode = z.infer<typeof reasonCodeSchema>;
 
+// Decision D31 (T1.1a). "Suspending an agent" is the Blueprint 6.2 term. Code treats anything that is
+// not "ACTIVE" as inactive (fail closed). The database has no CHECK on agents.status.
+export const AGENT_STATUSES = ["ACTIVE", "SUSPENDED"] as const;
+export const agentStatusSchema = z.enum(AGENT_STATUSES);
+export type AgentStatus = z.infer<typeof agentStatusSchema>;
+
 // Decision D17. BUDGET_RESERVE is not an action type (it uses the direct route from D2).
 export const ACTION_TYPES = [
   "SUPPLIER_SEARCH",
