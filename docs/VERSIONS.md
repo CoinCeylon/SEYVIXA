@@ -22,6 +22,10 @@ Checked on 2026-11-24 from the official sources below. Decision D12: Midnight, A
 | `@midnight-ntwrk/platform-js` (T5.1) | 3.0.0 | https://docs.midnight.network |
 | `@midnight-ntwrk/wallet-sdk` (T5.1) | 2.0.0 | https://docs.midnight.network |
 | Midnight Proof Server (`midnightntwrk/proof-server`, T5.1) | 9.0.2 | https://docs.midnight.network |
+| Aiken (`aiken` CLI, T6.1) | 1.1.24 | https://aiken-lang.org |
+| Aiken Version Manager (`aikup`, T6.1) | 0.0.11 | https://aiken-lang.org |
+| `@meshsdk/core` (T6.1) | 1.9.1 | https://www.npmjs.com/package/@meshsdk/core |
+| `@meshsdk/common` (T6.1) | 1.9.1 | https://www.npmjs.com/package/@meshsdk/common |
 
 Notes:
 - Postgres 19 also exists on Docker Hub. 18.7 is kept on purpose: the previous major, enough for everything we use.
