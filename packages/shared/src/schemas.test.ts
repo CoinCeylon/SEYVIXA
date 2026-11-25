@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import type { ZodType } from "zod";
 import {
   ACTION_STATUSES,
+  AGENT_STATUSES,
+  agentStatusSchema,
   ACTION_TYPES,
   REASON_CODES,
   actionHash,
@@ -43,8 +45,8 @@ const cases: [string, ZodType, Record<string, unknown>, Record<string, unknown>]
   [
     "agents",
     agentSchema,
-    { id: ID1, name: "Procurement Agent", status: "active", credential_hash: HASH },
-    { id: ID1, name: "Procurement Agent", status: "active", credential_hash: HASH, token: "secret" },
+    { id: ID1, name: "Procurement Agent", status: "ACTIVE", credential_hash: HASH },
+    { id: ID1, name: "Procurement Agent", status: "ACTIVE", credential_hash: HASH, token: "secret" },
   ],
   [
     "agent_grants",
@@ -160,6 +162,13 @@ test("action types are exactly the D17 list; BUDGET_RESERVE is not one", () => {
 test("action statuses include PENDING_APPROVAL (D15)", () => {
   assert.deepEqual([...ACTION_STATUSES], ["PENDING_APPROVAL", "APPROVED", "EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN"]);
 });
+
+test("agent statuses are exactly ACTIVE and SUSPENDED (D31)", () => {
+  assert.deepEqual([...AGENT_STATUSES], ["ACTIVE", "SUSPENDED"]);
+  assert.equal(agentStatusSchema.safeParse("active").success, false);
+  assert.equal(agentStatusSchema.safeParse("SUSPENDED").success, true);
+});
+
 
 const payload = {
   procurement_id: ID1,
