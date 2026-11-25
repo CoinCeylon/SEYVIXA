@@ -41,7 +41,23 @@ export function buildApp(options: AppOptions): FastifyInstance {
     options.logger === false
       ? false
       : { level: "info", ...options.logger, redact: { paths: LOG_REDACT_PATHS, censor: "[Redacted]" } };
-  const app = Fastify({ logger });
+  // Fastify's default request log has no headers. Add them, so the redact paths above are doing real work
+  // (and a test can fail if they are removed). authorization and cookie are replaced by "[Redacted]".
+  const app = Fastify({
+    logger:
+      logger === false
+        ? false
+        : {
+            ...logger,
+            serializers: {
+              req: (request: FastifyRequest) => ({
+                method: request.method,
+                url: request.url,
+                headers: request.headers,
+              }),
+            },
+          },
+  });
 
   // Generic errors only: no stack, no database text, nothing from the request.
   app.setErrorHandler((error, request, reply) => {

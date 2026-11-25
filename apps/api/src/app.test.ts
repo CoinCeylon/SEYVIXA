@@ -82,11 +82,21 @@ describe("POST /api/agents/:id/grants", () => {
     assert.equal(await grantCount(), 0);
   });
 
-  test("an agent credential is not an owner session", async () => {
-    const server = app(async () => null);
-    const response = await post(server, validBody(), agentId, { authorization: `Bearer ${agentToken}` });
-    assert.equal(response.statusCode, 401);
+  test("an agent credential is not an owner session: only the session function decides the owner", async () => {
+    // A session function that knows only a cookie. The agent's Bearer token means nothing to it.
+    const cookieSession: GetSessionOwnerId = async (request) =>
+      request.headers.cookie === "session=owner-session" ? ownerId : null;
+    const server = app(cookieSession);
+    const bearerOnly = await post(server, validBody(), agentId, { authorization: `Bearer ${agentToken}` });
+    assert.equal(bearerOnly.statusCode, 401);
     assert.equal(await grantCount(), 0);
+    // Control: the same request with the session cookie works, so the 401 above came from the missing session.
+    const withCookie = await post(server, validBody(), agentId, { cookie: "session=owner-session" });
+    assert.equal(withCookie.statusCode, 201);
+    // A Bearer token next to the cookie changes nothing: the owner is still the session owner.
+    const both = await post(server, validBody(), agentId, { cookie: "session=owner-session", authorization: `Bearer ${agentToken}` });
+    assert.equal(both.statusCode, 201);
+    assert.equal(both.json().owner_id, ownerId);
   });
 
   test("owner_id in the body is rejected, even if it is the session owner", async () => {
@@ -179,13 +189,8 @@ describe("logging", () => {
     const authorization = `Bearer ${agentToken}`;
     const response = await post(server, validBody(), agentId, { cookie, authorization });
     assert.equal(response.statusCode, 201);
-    // Fastify's default request log does not include headers. If a later card logs them, the redaction
-    // must hold, so check the configured paths directly with a request-shaped object.
-    server.log.info({ req: { headers: { authorization, cookie } } }, "header redaction check");
     const output = lines.join("\n");
-    assert.ok(output.length > 0, "expected some log output");
-    // Fastify's request serializer already drops headers from a "req" log object; the redact paths are the
-    // second guard. Either way the secrets must not reach the output.
+    assert.ok(output.includes("[Redacted]"), "expected the redaction marker (headers are logged, redacted)");
     assert.ok(!output.includes("cookie-value-that-must-not-be-logged"));
     assert.ok(!output.includes(agentToken));
     assert.ok(!output.includes(KEY));
