@@ -59,16 +59,18 @@ node --test "apps/web/lib/wallet/*.test.ts"
 
 ## Manual Browser Verification (Lace / Eternl on Preprod)
 
-1. Switch Lace or Eternl to **Cardano Preprod** (never Mainnet).
-2. Connect and read your testnet address:
-   ```ts
-   const handle = await connectWallet("lace"); // or "eternl"
-   const address = await getAddress(handle);
-   console.log({ wallet: handle.walletName, networkId: handle.networkId, address });
-   ```
-3. Test `signMessage` with a harmless test message and log the public `{ signature, key }` result:
-   ```ts
-   const signed = await signMessage(address, "seyvixa-t7.2b-test-message");
-   console.log("signData result:", signed);
-   ```
-4. Test `signTransaction` with a harmless unsigned Preprod transaction CBOR hex and confirm it returns a witness set hex string without submitting anything on-chain.
+> **Status:** Pending manual browser interaction with a real Lace or Eternl extension switched to **Cardano Preprod** (unit tests and type checking pass; live wallet popup approval requires a human tester).
+
+Start the zero-dependency local verification harness (binds to `127.0.0.1:4173` only, serves the exact helper TypeScript files, and never submits transactions):
+
+```bash
+node apps/web/lib/wallet/verify-harness.mjs
+```
+
+Then open `http://127.0.0.1:4173` in Chrome/Brave with **Lace** or **Eternl** set to **Cardano Preprod** (never Mainnet):
+
+1. Click **Connect & Get Address** and confirm `networkId: 0` and an `addr_test1...` address.
+2. Click **Sign Message (signData)** with the harmless test message (`seyvixa-t7.2b-preprod-test-message`) and copy the public `{ signature, key }` console output for PR evidence.
+   - Note: `signMessage` decodes Bech32 `addr_test1...` addresses to CIP-30 hex address bytes (verifying the BIP-173 checksum and CIP-19 header) before calling `api.signData`.
+   - If `signData` is unsupported or blocked by the wallet (`WalletError("UNSUPPORTED_OPERATION")`), notify Abdul at once for the demo-key fallback (Blueprint Section 6.5).
+3. Paste a harmless unsigned Preprod transaction CBOR hex and click **Sign Transaction (signTx only)**. Confirm it returns a hex witness set without submitting anything on-chain.

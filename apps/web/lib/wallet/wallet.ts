@@ -3,7 +3,7 @@
 // Uses the official CIP-30 browser API (`window.cardano`) directly for Lace and Eternl.
 // Test networks only (CIP-30 networkId 0). The wallet signs but NEVER submits transactions.
 
-import { encodeCardanoTestnetAddress } from "./bech32.ts";
+import { decodeCardanoTestnetAddress, encodeCardanoTestnetAddress } from "./bech32.ts";
 import {
   SUPPORTED_WALLETS,
   TESTNET_NETWORK_ID,
@@ -45,34 +45,38 @@ function encodePayloadToHex(payload: string | Uint8Array): string {
   return bytesToHex(bytes);
 }
 
-function validateTestnetSigningAddress(address: string): string {
+function normalizeTestnetSigningAddressToHex(address: string): string {
   const trimmed = address.trim();
   if (trimmed.length === 0) {
     throw new WalletError("INVALID_ADDRESS", "Signing address must not be empty.");
   }
 
+  const lower = trimmed.toLowerCase();
+
   // Reject Mainnet Bech32 addresses up front (fail closed).
-  if (trimmed.startsWith("addr1") || trimmed.startsWith("stake1")) {
+  if (lower.startsWith("addr1") || lower.startsWith("stake1")) {
     throw new WalletError(
       "NETWORK_NOT_TESTNET",
       "Refusing Mainnet Bech32 address for signing. Use a Cardano Preprod testnet address (addr_test1...).",
     );
   }
 
-  // Per CIP-30, signData accepts either Bech32 or hex-encoded address bytes.
-  if (trimmed.startsWith("addr_test1")) {
-    return trimmed;
+  // Per CIP-30, api.signData(addr: Address, payload: Bytes) expects hex-encoded address bytes.
+  // Decode Bech32 testnet addresses (verifying BIP-173 checksum and CIP-19 header) to hex bytes
+  // so both Lace and Eternl accept addresses returned by getAddress().
+  if (lower.startsWith("addr_test1")) {
+    return decodeCardanoTestnetAddress(trimmed);
   }
 
   if (isEvenHex(trimmed)) {
-    // Validates CIP-19 header (Shelley payment address + testnet network tag 0).
+    // Validates CIP-19 header (Shelley payment address + testnet network tag 0 + length).
     encodeCardanoTestnetAddress(trimmed);
-    return trimmed;
+    return lower;
   }
 
   throw new WalletError(
     "INVALID_ADDRESS",
-    "Signing address must be a Cardano testnet Bech32 address (addr_test1...) or CIP-30 hex address bytes.",
+    "Signing address must be a valid Cardano testnet Bech32 address (addr_test1...) or CIP-30 hex address bytes.",
   );
 }
 
@@ -260,12 +264,19 @@ export async function signMessage(
   const networkId = await target.api.getNetworkId();
   await assertTestnetNetwork(networkId);
 
-  const validatedAddress = validateTestnetSigningAddress(address);
+  const hexAddress = normalizeTestnetSigningAddressToHex(address);
   const hexPayload = encodePayloadToHex(payload);
+
+  if (typeof target.api.signData !== "function") {
+    throw new WalletError(
+      "UNSUPPORTED_OPERATION",
+      "Connected wallet does not expose CIP-30 signData. Escalate to Abdul for the demo-key fallback (Blueprint Section 6.5).",
+    );
+  }
 
   let result: Cip30DataSignature;
   try {
-    result = await target.api.signData(validatedAddress, hexPayload);
+    result = await target.api.signData(hexAddress, hexPayload);
   } catch (err) {
     throw new WalletError(
       "SIGNING_REJECTED",
@@ -278,13 +289,13 @@ export async function signMessage(
     result === null ||
     typeof result !== "object" ||
     typeof result.signature !== "string" ||
-    result.signature.trim().length === 0 ||
+    !isEvenHex(result.signature) ||
     typeof result.key !== "string" ||
-    result.key.trim().length === 0
+    !isEvenHex(result.key)
   ) {
     throw new WalletError(
       "INVALID_SIGNATURE_RESPONSE",
-      "Wallet signData returned an invalid DataSignature (missing signature or key).",
+      "Wallet signData returned an invalid DataSignature (expected non-empty even-length hex CBOR signature and key).",
     );
   }
 
@@ -321,6 +332,13 @@ export async function signTransaction(
 
   const partialSign = options?.partialSign ?? false;
 
+  if (typeof target.api.signTx !== "function") {
+    throw new WalletError(
+      "UNSUPPORTED_OPERATION",
+      "Connected wallet does not expose CIP-30 signTx.",
+    );
+  }
+
   let witnessSetHex: string;
   try {
     witnessSetHex = await target.api.signTx(trimmedTx, partialSign);
@@ -332,7 +350,7 @@ export async function signTransaction(
     );
   }
 
-  if (typeof witnessSetHex !== "string" || !isEvenHex(witnessSetHex.trim())) {
+  if (typeof witnessSetHex !== "string" || !isEvenHex(witnessSetHex)) {
     throw new WalletError(
       "INVALID_SIGNATURE_RESPONSE",
       "Wallet signTx returned an invalid witness set (expected non-empty even-length hex CBOR).",
