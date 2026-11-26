@@ -1,0 +1,63 @@
+{
+  "schema_version": "receipt.v0",
+  "view": "full",
+  "receipt_id": "00000000-0000-4000-8000-000000000707",
+  "created_at": "2026-11-26T12:15:00.000Z",
+  "kid": "417e4349e72f7c30",
+  "procurement_id": "00000000-0000-4000-8000-000000000010",
+  "approved_action": {
+    "procurement_id": "00000000-0000-4000-8000-000000000010",
+    "owner_id": "00000000-0000-4000-8000-000000000001",
+    "supplier_id": "00000000-0000-4000-8000-000000000002",
+    "payee_address": "addr_test1vz2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzerspjrlsz",
+    "items": [
+      {
+        "description": "Simulated cotton bed linen sets",
+        "quantity": 10
+      }
+    ],
+    "total_lkr": "45000.00",
+    "settlement_asset": "tADA",
+    "escrow_amount_tada": "5.000000",
+    "escrow_script_address": "addr_test1zrphkx6acpnf78fuvxn0mkew3l0fd058hzquvz7w36x4gten0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgsxj90mg",
+    "refund_deadline": "2026-12-03T12:00:00.000Z",
+    "expiry": "2026-11-26T12:30:00.000Z",
+    "nonce": "demo-nonce-p0-7"
+  },
+  "action_hash": "33382b6ae8d7eb428824186e1e27d2aafb4a3c3329c93609cc3cd2865b58ecef",
+  "approval": {
+    "nonce": "demo-nonce-p0-7",
+    "expires_at": "2026-11-26T12:30:00.000Z",
+    "owner_key_hash": "9493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e",
+    "signature": "ca2b0acb1186e9b3be0d33f7f4bcbe68dc380def74578417b5edff9f80c5b690:9d0eb8200ce0bfdb38b44b8613f56413f131c2d8a76fafa690c9a5e4ed0bec2cf786d4266387e79bf7fc44104d1fbb448ee89184539450714b9dc01cfc1a9f09"
+  },
+  "commitment_salt": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "chain": {
+    "network": "preprod",
+    "script_address": "addr_test1zrphkx6acpnf78fuvxn0mkew3l0fd058hzquvz7w36x4gten0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgsxj90mg",
+    "escrow_utxo_ref": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc#0",
+    "lock_tx_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "locked_lovelace": 5000000,
+    "outcome": "released",
+    "release_tx_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  },
+  "midnight": {
+    "supplier_id": "00000000-0000-4000-8000-000000000002",
+    "challenge_id": "00000000-0000-4000-8000-000000000020",
+    "verification_reference": "simulated-midnight-demo-ref-p0-7",
+    "result": "VALID",
+    "fallback_label": "Midnight toolchain demo (example contract). Supplier eligibility is simulated."
+  },
+  "policy_summary": {
+    "decisions": [
+      {
+        "agent": "procurement-agent",
+        "action_type": "PROPOSE_PURCHASE",
+        "decision": "APPROVAL_REQUIRED",
+        "resource": "quotes/supplier-a",
+        "reason_code": "APPROVAL_REQUIRED"
+      }
+    ]
+  },
+  "signature": "b11c26cb465037fcb7aa710c880f6160de989783e9fc0c541673e216e15896269f48bce7f6b6fe97d80e3875b7cf7f49739a10cca19e168ab6719f2f46d2fa01"
+}
