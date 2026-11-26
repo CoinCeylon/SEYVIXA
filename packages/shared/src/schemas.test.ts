@@ -4,6 +4,8 @@ import { readFileSync } from "node:fs";
 import type { ZodType } from "zod";
 import {
   ACTION_STATUSES,
+  AGENT_STATUSES,
+  agentStatusSchema,
   ACTION_TYPES,
   REASON_CODES,
   actionHash,
@@ -43,8 +45,8 @@ const cases: [string, ZodType, Record<string, unknown>, Record<string, unknown>]
   [
     "agents",
     agentSchema,
-    { id: ID1, name: "Procurement Agent", status: "active", credential_hash: HASH },
-    { id: ID1, name: "Procurement Agent", status: "active", credential_hash: HASH, token: "secret" },
+    { id: ID1, name: "Procurement Agent", status: "ACTIVE", credential_hash: HASH },
+    { id: ID1, name: "Procurement Agent", status: "ACTIVE", credential_hash: HASH, token: "secret" },
   ],
   [
     "agent_grants",
@@ -161,6 +163,13 @@ test("action statuses include PENDING_APPROVAL (D15)", () => {
   assert.deepEqual([...ACTION_STATUSES], ["PENDING_APPROVAL", "APPROVED", "EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN"]);
 });
 
+test("agent statuses are exactly ACTIVE and SUSPENDED (D31)", () => {
+  assert.deepEqual([...AGENT_STATUSES], ["ACTIVE", "SUSPENDED"]);
+  assert.equal(agentStatusSchema.safeParse("active").success, false);
+  assert.equal(agentStatusSchema.safeParse("SUSPENDED").success, true);
+});
+
+
 const payload = {
   procurement_id: ID1,
   owner_id: ID2,
@@ -215,6 +224,20 @@ test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at
     const nested = { ...req, parameters: { [key]: "x" } };
     assert.equal(gatewayRequestSchema.safeParse(nested).success, false, key);
   }
+});
+
+test("policy event reason_code (D36): DENY needs a D4 code; ALLOW and APPROVAL_REQUIRED store the decision name", () => {
+  const base = { id: ID1, agent_id: ID2, action: "FILE_READ", created_at: TS, procurement_id: null, action_id: null, resource: "quotes/a" };
+  const ok = (e: object) => policyEventSchema.safeParse({ ...base, ...e }).success;
+  assert.equal(ok({ decision: "DENY", reason_code: "RESOURCE_OUT_OF_SCOPE" }), true);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "ALLOW" }), true);
+  assert.equal(ok({ decision: "APPROVAL_REQUIRED", reason_code: "APPROVAL_REQUIRED" }), true);
+  assert.equal(ok({ decision: "DENY", reason_code: "ALLOW" }), false, "a DENY cannot carry a success value");
+  assert.equal(ok({ decision: "DENY", reason_code: "APPROVAL_REQUIRED" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "RESOURCE_OUT_OF_SCOPE" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "APPROVAL_REQUIRED" }), false);
+  assert.equal(ok({ decision: "APPROVAL_REQUIRED", reason_code: "ALLOW" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "MADE_UP" }), false);
 });
 
 test("gateway response: the three decisions parse; a DENY needs a D4 reason code", () => {

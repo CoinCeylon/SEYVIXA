@@ -1,0 +1,6 @@
+node_modules/
+managed/
+.spike-seed
+.wallet-state.json
+.spike-contract.json
+.private-state/
