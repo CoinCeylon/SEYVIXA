@@ -1,4 +1,4 @@
-(// T7.1: read-only getTxStatus(txId). Blueprint Section 6.2 (blockchain call: "query the chain-data API"),
+// T7.1: read-only getTxStatus(txId). Blueprint Section 6.2 (blockchain call: "query the chain-data API"),
 // Section 6.7 ("The backend must verify the actual network and transaction state."), Section 9 item 12.
 // Team decision D18: found = the chain-data API returns the transaction in a block; confirmed = found
 // with at least CONFIRMATION_DEPTH block confirmations (default 3, set in config, a prototype setting).
