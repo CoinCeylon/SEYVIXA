@@ -1,0 +1,9 @@
+{
+  "algorithm": "Ed25519",
+  "kid": "3a21702b80f00a29",
+  "fingerprint": "3a21702b80f00a29165a1f101ad56446372c35299a9179dcfaea9ced70a75bba",
+  "public_key_hex": "80a1a20805ef120196209b6b83f07c47bb2885648fce535ec3123678a18ff611",
+  "public_key_base64url": "gKGiCAXvEgGWIJtrg_B8R7sohWSPzlNewxI2eKGP9hE",
+  "created_at": "2026-11-26T13:54:45.559Z",
+  "note": "Public key only (T8.2, Blueprint Section 6.8). Do not regenerate after publication."
+}
