@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SEYVIXA T7.2b — CIP-30 Preprod Wallet Verification Harness</title>
+    <style>
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        max-width: 820px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        line-height: 1.5;
+        color: #111;
+      }
+      .banner {
+        background: #fff7e6;
+        border: 1px solid #f0c36d;
+        padding: 0.75rem 1rem;
+        border-radius: 6px;
+        margin-bottom: 1.5rem;
+      }
+      section {
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+      input,
+      textarea,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      pre {
+        background: #f6f8fa;
+        border: 1px solid #e1e4e8;
+        padding: 0.75rem;
+        overflow-x: auto;
+        font-size: 0.85rem;
+      }
+      .error {
+        color: #b42318;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>SEYVIXA T7.2b — CIP-30 Wallet Verification Harness</h1>
+    <div class="banner">
+      <strong>Cardano Preprod testnet only — test ADA has no monetary value.</strong><br />
+      This local harness tests <code>connectWallet()</code>, <code>getAddress()</code>,
+      <code>signMessage()</code> (CIP-30 <code>signData</code>), and
+      <code>signTransaction()</code> (CIP-30 <code>signTx</code>). The wallet signs and
+      <strong>never submits</strong> transactions.
+    </div>
+
+    <section>
+      <h2>1. Connect Testnet Wallet &amp; Read Address</h2>
+      <label for="walletId">Wallet</label>
+      <select id="walletId">
+        <option value="lace">Lace (Preprod)</option>
+        <option value="eternl">Eternl (Preprod)</option>
+      </select>
+      <button id="connectBtn" type="button">Connect &amp; Get Address</button>
+      <pre id="connectOut">Not connected yet.</pre>
+    </section>
+
+    <section>
+      <h2>2. Test <code>signMessage</code> (CIP-30 <code>signData</code>)</h2>
+      <label for="messageInput">Harmless test message (never pass a transaction hash)</label>
+      <input
+        id="messageInput"
+        type="text"
+        value="seyvixa-t7.2b-preprod-test-message"
+      />
+      <button id="signMsgBtn" type="button">Sign Message (signData)</button>
+      <pre id="signMsgOut">No signature yet.</pre>
+    </section>
+
+    <section>
+      <h2>3. Test <code>signTransaction</code> (CIP-30 <code>signTx</code> — never submits)</h2>
+      <label for="txInput">Harmless unsigned Preprod transaction CBOR hex</label>
+      <textarea
+        id="txInput"
+        rows="4"
+        placeholder="Paste an unsigned Cardano Preprod transaction CBOR hex string..."
+      ></textarea>
+      <label>
+        <input id="partialSign" type="checkbox" style="width: auto" />
+        partialSign (CIP-30 flag, default false)
+      </label>
+      <button id="signTxBtn" type="button">Sign Transaction (signTx only)</button>
+      <pre id="signTxOut">No witness set yet.</pre>
+    </section>
+
+    <script type="module">
+      import {
+        connectWallet,
+        getAddress,
+        signMessage,
+        signTransaction,
+        WalletError,
+      } from "./index.ts";
+
+      let currentHandle = null;
+      let currentAddress = null;
+
+      const connectOut = document.getElementById("connectOut");
+      const signMsgOut = document.getElementById("signMsgOut");
+      const signTxOut = document.getElementById("signTxOut");
+
+      function formatError(err) {
+        if (err instanceof WalletError) {
+          return `WalletError [${err.code}]: ${err.message}`;
+        }
+        return String(err);
+      }
+
+      document.getElementById("connectBtn").addEventListener("click", async () => {
+        connectOut.classList.remove("error");
+        try {
+          const walletId = document.getElementById("walletId").value;
+          currentHandle = await connectWallet(walletId);
+          currentAddress = await getAddress(currentHandle);
+          const summary = {
+            walletId: currentHandle.walletId,
+            walletName: currentHandle.walletName,
+            apiVersion: currentHandle.apiVersion,
+            networkId: currentHandle.networkId,
+            address: currentAddress,
+          };
+          console.log("T7.2b connectWallet + getAddress:", summary);
+          connectOut.textContent = JSON.stringify(summary, null, 2);
+        } catch (err) {
+          connectOut.classList.add("error");
+          connectOut.textContent = formatError(err);
+        }
+      });
+
+      document.getElementById("signMsgBtn").addEventListener("click", async () => {
+        signMsgOut.classList.remove("error");
+        try {
+          if (!currentHandle || !currentAddress) {
+            throw new Error("Connect a testnet wallet first.");
+          }
+          const payload = document.getElementById("messageInput").value;
+          const result = await signMessage(currentAddress, payload, { handle: currentHandle });
+          console.log("T7.2b signData public result:", result);
+          signMsgOut.textContent = JSON.stringify(result, null, 2);
+        } catch (err) {
+          signMsgOut.classList.add("error");
+          signMsgOut.textContent = formatError(err);
+        }
+      });
+
+      document.getElementById("signTxBtn").addEventListener("click", async () => {
+        signTxOut.classList.remove("error");
+        try {
+          if (!currentHandle) {
+            throw new Error("Connect a testnet wallet first.");
+          }
+          const unsignedTx = document.getElementById("txInput").value.trim();
+          const partialSign = document.getElementById("partialSign").checked;
+          const witnessSetHex = await signTransaction(unsignedTx, {
+            handle: currentHandle,
+            partialSign,
+          });
+          const output = {
+            signedOnlyNotSubmitted: true,
+            partialSign,
+            witnessSetHex,
+          };
+          console.log("T7.2b signTx witness set (not submitted):", output);
+          signTxOut.textContent = JSON.stringify(output, null, 2);
+        } catch (err) {
+          signTxOut.classList.add("error");
+          signTxOut.textContent = formatError(err);
+        }
+      });
+    </script>
+  </body>
+</html>

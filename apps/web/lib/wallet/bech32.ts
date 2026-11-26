@@ -5,6 +5,9 @@
 import { WalletError } from "./types.ts";
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const BECH32_CHARSET_MAP = new Map<string, number>(
+  [...BECH32_CHARSET].map((ch, idx) => [ch, idx]),
+);
 const BECH32_GENERATORS = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3] as const;
 const TESTNET_PAYMENT_HRP = "addr_test";
 
@@ -91,19 +94,83 @@ function decodeHexBytes(hex: string): Uint8Array {
   return bytes;
 }
 
-/**
- * Encodes CIP-30 hex address bytes as a CIP-19 Bech32 testnet payment address (`addr_test1...`).
- *
- * Fails closed if:
- * - the hex string is malformed,
- * - the CIP-19 address type is not a Shelley payment address (upper nibble 0x0..0x7), or
- * - the CIP-19 network tag is not testnet (lower nibble 0x0).
- *
- * Does NOT reject script payment addresses (types 0x1, 0x3, 0x5, 0x7): key-hash validation
- * is performed by the server in T2.2 (Blueprint Section 6.5).
- */
-export function encodeCardanoTestnetAddress(hexAddress: string): string {
-  const bytes = decodeHexBytes(hexAddress);
+function convertBits5To8(words: readonly number[]): Uint8Array {
+  let acc = 0;
+  let bits = 0;
+  const out: number[] = [];
+
+  for (const word of words) {
+    acc = (acc << 5) | word;
+    bits += 5;
+    while (bits >= 8) {
+      bits -= 8;
+      out.push((acc >>> bits) & 0xff);
+    }
+  }
+
+  // BIP-173: remaining padding bits must be < 5 and all zero.
+  if (bits >= 5 || ((acc << (8 - bits)) & 0xff) !== 0) {
+    throw new WalletError(
+      "INVALID_ADDRESS",
+      "Invalid Bech32 address padding.",
+    );
+  }
+
+  return new Uint8Array(out);
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  let hex = "";
+  for (const byte of bytes) {
+    hex += byte.toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+
+function decodeBech32(bech32: string): { readonly hrp: string; readonly bytes: Uint8Array } {
+  const trimmed = bech32.trim();
+  if (trimmed.length < 8) {
+    throw new WalletError("INVALID_ADDRESS", "Bech32 address is too short.");
+  }
+
+  // BIP-173 forbids mixed-case strings.
+  const hasLower = /[a-z]/.test(trimmed);
+  const hasUpper = /[A-Z]/.test(trimmed);
+  if (hasLower && hasUpper) {
+    throw new WalletError("INVALID_ADDRESS", "Bech32 address must not mix upper and lower case.");
+  }
+
+  const lower = trimmed.toLowerCase();
+  const sepIndex = lower.lastIndexOf("1");
+  if (sepIndex < 1 || sepIndex + 7 > lower.length) {
+    throw new WalletError("INVALID_ADDRESS", "Bech32 address has an invalid separator or length.");
+  }
+
+  const hrp = lower.slice(0, sepIndex);
+  const dataPart = lower.slice(sepIndex + 1);
+  const words: number[] = [];
+  for (const ch of dataPart) {
+    const val = BECH32_CHARSET_MAP.get(ch);
+    if (val === undefined) {
+      throw new WalletError("INVALID_ADDRESS", "Bech32 address contains an invalid character.");
+    }
+    words.push(val);
+  }
+
+  // BIP-173 Bech32 checksum verification (constant === 1).
+  if (polymod([...hrpExpand(hrp), ...words]) !== 1) {
+    throw new WalletError("INVALID_ADDRESS", "Bech32 address checksum verification failed.");
+  }
+
+  const payloadWords = words.slice(0, -6);
+  return { hrp, bytes: convertBits5To8(payloadWords) };
+}
+
+function validateShelleyTestnetPaymentBytes(bytes: Uint8Array): void {
+  if (bytes.length === 0) {
+    throw new WalletError("INVALID_ADDRESS", "Cardano address bytes must not be empty.");
+  }
+
   const header = bytes[0];
   const addressType = (header >>> 4) & 0x0f;
   const networkTag = header & 0x0f;
@@ -124,5 +191,64 @@ export function encodeCardanoTestnetAddress(hexAddress: string): string {
     );
   }
 
+  // CIP-19 byte lengths: base (0x0..0x3) = 57 bytes, pointer (0x4..0x5) >= 32 bytes, enterprise (0x6..0x7) = 29 bytes.
+  const validLength =
+    addressType <= 0x03
+      ? bytes.length === 57
+      : addressType <= 0x05
+        ? bytes.length >= 32
+        : bytes.length === 29;
+
+  if (!validLength) {
+    throw new WalletError(
+      "INVALID_ADDRESS",
+      `Invalid CIP-19 Shelley payment address length (${String(bytes.length)} bytes for type 0x${addressType.toString(16)}).`,
+    );
+  }
+}
+
+/**
+ * Encodes CIP-30 hex address bytes as a CIP-19 Bech32 testnet payment address (`addr_test1...`).
+ *
+ * Fails closed if:
+ * - the hex string is malformed,
+ * - the CIP-19 address type is not a Shelley payment address (upper nibble 0x0..0x7),
+ * - the CIP-19 network tag is not testnet (lower nibble 0x0), or
+ * - the CIP-19 byte length does not match the address type.
+ *
+ * Does NOT reject script payment addresses (types 0x1, 0x3, 0x5, 0x7): key-hash validation
+ * is performed by the server in T2.2 (Blueprint Section 6.5).
+ */
+export function encodeCardanoTestnetAddress(hexAddress: string): string {
+  const bytes = decodeHexBytes(hexAddress);
+  validateShelleyTestnetPaymentBytes(bytes);
   return encodeBech32(TESTNET_PAYMENT_HRP, bytes);
+}
+
+/**
+ * Decodes a CIP-19 Bech32 testnet payment address (`addr_test1...`) to lowercase hex-encoded
+ * address bytes (the normative CIP-30 `Address` format for `api.signData`).
+ *
+ * Fails closed on Mainnet HRPs (`addr`, `stake`), invalid BIP-173 checksums, non-payment
+ * addresses, or invalid CIP-19 lengths.
+ */
+export function decodeCardanoTestnetAddress(bech32Address: string): string {
+  const { hrp, bytes } = decodeBech32(bech32Address);
+
+  if (hrp === "addr" || hrp === "stake") {
+    throw new WalletError(
+      "NETWORK_NOT_TESTNET",
+      "Refusing Mainnet Bech32 address. Use a Cardano Preprod testnet address (addr_test1...).",
+    );
+  }
+
+  if (hrp !== TESTNET_PAYMENT_HRP) {
+    throw new WalletError(
+      "INVALID_ADDRESS",
+      `Expected Cardano testnet payment address prefix "${TESTNET_PAYMENT_HRP}", got "${hrp}".`,
+    );
+  }
+
+  validateShelleyTestnetPaymentBytes(bytes);
+  return bytesToHex(bytes);
 }

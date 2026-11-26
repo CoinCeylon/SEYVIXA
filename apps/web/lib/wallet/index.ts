@@ -1,7 +1,7 @@
 // T7.2a & T7.2b — Browser wallet helper public exports (Blueprint Section 6.5; Guide Section 4.3).
 
 export { connectWallet, getAddress, signMessage, signTransaction } from "./wallet.ts";
-export { encodeCardanoTestnetAddress } from "./bech32.ts";
+export { decodeCardanoTestnetAddress, encodeCardanoTestnetAddress } from "./bech32.ts";
 export {
   SUPPORTED_WALLETS,
   TESTNET_NETWORK_ID,

@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
-import { encodeCardanoTestnetAddress } from "./bech32.ts";
+import { decodeCardanoTestnetAddress, encodeCardanoTestnetAddress } from "./bech32.ts";
 import {
   TESTNET_NETWORK_ID,
   WalletError,
@@ -119,13 +119,44 @@ describe("encodeCardanoTestnetAddress (CIP-19 / BIP-173)", () => {
     );
   });
 
-  it("rejects malformed hex strings", () => {
-    for (const bad of ["", "abc", "zzzz", "addr_test1nothex"]) {
+  it("rejects malformed hex strings and invalid CIP-19 byte lengths", () => {
+    for (const bad of ["", "abc", "zzzz", "addr_test1nothex", "00", "60949331"]) {
       assert.throws(
         () => encodeCardanoTestnetAddress(bad),
         (err: unknown) => err instanceof WalletError && err.code === "INVALID_ADDRESS",
       );
     }
+  });
+
+  it("decodes official CIP-19 testnet Bech32 addresses back to lowercase CIP-30 hex bytes", () => {
+    assert.equal(decodeCardanoTestnetAddress(CIP19_TYPE00_TESTNET_BECH32), CIP19_TYPE00_TESTNET_HEX);
+    assert.equal(
+      decodeCardanoTestnetAddress(CIP19_TYPE01_SCRIPT_TESTNET_BECH32),
+      CIP19_TYPE01_SCRIPT_TESTNET_HEX,
+    );
+    assert.equal(
+      decodeCardanoTestnetAddress(CIP19_TYPE06_ENTERPRISE_TESTNET_BECH32),
+      CIP19_TYPE06_ENTERPRISE_TESTNET_HEX,
+    );
+  });
+
+  it("rejects corrupted Bech32 checksum, mixed case, and Mainnet Bech32 addresses on decode", () => {
+    const corrupted = `${CIP19_TYPE00_TESTNET_BECH32.slice(0, -1)}q`;
+    const mixedCase = `Addr_test1${CIP19_TYPE00_TESTNET_BECH32.slice("addr_test1".length)}`;
+    for (const bad of [corrupted, mixedCase, "addr_test1garbage", "stake_test1uqevw2xnsc0pvn9t9r9c7qryfqfeerchgrlm3ea2nefr9hqxfluzk"]) {
+      assert.throws(
+        () => decodeCardanoTestnetAddress(bad),
+        (err: unknown) => err instanceof WalletError && err.code === "INVALID_ADDRESS",
+      );
+    }
+
+    assert.throws(
+      () =>
+        decodeCardanoTestnetAddress(
+          "addr1qx2fxv2umyhttkxyxp8x0dlpdt3k6cwng5pxj3jhsydzer3n0d3vllmyqwsx5wktcd8cc3sq835lu7drv2xwl2wywfgse35a3x",
+        ),
+      (err: unknown) => err instanceof WalletError && err.code === "NETWORK_NOT_TESTNET",
+    );
   });
 });
 
@@ -260,7 +291,7 @@ describe("T7.2b — signMessage (CIP-30 signData)", () => {
     _resetActiveWalletForTests();
   });
 
-  it("encodes UTF-8 payload to hex, calls signData, and returns COSE_Sign1 + COSE_Key verbatim", async () => {
+  it("decodes Bech32 testnet address to CIP-30 hex bytes, encodes UTF-8 payload to hex, calls signData, and returns COSE_Sign1 + COSE_Key verbatim", async () => {
     const calls: Array<{ addr: string; payload: string }> = [];
     let signTxCalled = false;
 
@@ -280,7 +311,7 @@ describe("T7.2b — signMessage (CIP-30 signData)", () => {
     const result = await signMessage(CIP19_TYPE00_TESTNET_BECH32, "seyvixa-register-v1");
     assert.deepEqual(result, MOCK_COSE_SIGNATURE);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].addr, CIP19_TYPE00_TESTNET_BECH32);
+    assert.equal(calls[0].addr, CIP19_TYPE00_TESTNET_HEX);
     assert.equal(calls[0].payload, Buffer.from("seyvixa-register-v1", "utf8").toString("hex"));
     assert.equal(signTxCalled, false);
   });
@@ -345,17 +376,45 @@ describe("T7.2b — signMessage (CIP-30 signData)", () => {
     );
   });
 
-  it("fails closed if wallet returns a malformed DataSignature", async () => {
-    const api = createMockApi({
+  it("fails closed on malformed DataSignature, corrupted Bech32 address, or missing signData", async () => {
+    const emptySigApi = createMockApi({
       signData: async () => ({ signature: "", key: "" }),
     });
-    const handle = await connectWallet("lace", {
-      cardano: { lace: createMockProvider("Lace", api) },
+    const emptySigHandle = await connectWallet("lace", {
+      cardano: { lace: createMockProvider("Lace", emptySigApi) },
     });
 
     await assert.rejects(
-      () => signMessage(CIP19_TYPE00_TESTNET_BECH32, "test", { handle }),
+      () => signMessage(CIP19_TYPE00_TESTNET_BECH32, "test", { handle: emptySigHandle }),
       (err: unknown) => err instanceof WalletError && err.code === "INVALID_SIGNATURE_RESPONSE",
+    );
+
+    const nonHexSigApi = createMockApi({
+      signData: async () => ({ signature: "not-hex!", key: "a401" }),
+    });
+    const nonHexSigHandle = await connectWallet("lace", {
+      cardano: { lace: createMockProvider("Lace", nonHexSigApi) },
+    });
+
+    await assert.rejects(
+      () => signMessage(CIP19_TYPE00_TESTNET_BECH32, "test", { handle: nonHexSigHandle }),
+      (err: unknown) => err instanceof WalletError && err.code === "INVALID_SIGNATURE_RESPONSE",
+    );
+
+    await assert.rejects(
+      () => signMessage("addr_test1notavalidbech32address", "test", { handle: nonHexSigHandle }),
+      (err: unknown) => err instanceof WalletError && err.code === "INVALID_ADDRESS",
+    );
+
+    const noSignDataApi = createMockApi();
+    (noSignDataApi as unknown as { signData?: unknown }).signData = undefined;
+    const noSignDataHandle = await connectWallet("eternl", {
+      cardano: { eternl: createMockProvider("Eternl", noSignDataApi) },
+    });
+
+    await assert.rejects(
+      () => signMessage(CIP19_TYPE00_TESTNET_BECH32, "test", { handle: noSignDataHandle }),
+      (err: unknown) => err instanceof WalletError && err.code === "UNSUPPORTED_OPERATION",
     );
   });
 });
@@ -453,6 +512,29 @@ describe("T7.2b — signTransaction (CIP-30 signTx, never submits)", () => {
     await assert.rejects(
       () => signTransaction(MOCK_UNSIGNED_TX_CBOR_HEX, { handle: badWitnessHandle }),
       (err: unknown) => err instanceof WalletError && err.code === "INVALID_SIGNATURE_RESPONSE",
+    );
+
+    const paddedWitnessHandle = await connectWallet("lace", {
+      cardano: {
+        lace: createMockProvider(
+          "Lace",
+          createMockApi({ signTx: async () => ` ${MOCK_WITNESS_SET_CBOR_HEX} ` }),
+        ),
+      },
+    });
+    await assert.rejects(
+      () => signTransaction(MOCK_UNSIGNED_TX_CBOR_HEX, { handle: paddedWitnessHandle }),
+      (err: unknown) => err instanceof WalletError && err.code === "INVALID_SIGNATURE_RESPONSE",
+    );
+
+    const noSignTxApi = createMockApi();
+    (noSignTxApi as unknown as { signTx?: unknown }).signTx = undefined;
+    const noSignTxHandle = await connectWallet("eternl", {
+      cardano: { eternl: createMockProvider("Eternl", noSignTxApi) },
+    });
+    await assert.rejects(
+      () => signTransaction(MOCK_UNSIGNED_TX_CBOR_HEX, { handle: noSignTxHandle }),
+      (err: unknown) => err instanceof WalletError && err.code === "UNSUPPORTED_OPERATION",
     );
   });
 });
