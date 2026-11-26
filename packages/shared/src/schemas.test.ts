@@ -226,6 +226,20 @@ test("gateway request: valid passes; hash, ticket, ids and nonce are rejected at
   }
 });
 
+test("policy event reason_code (D36): DENY needs a D4 code; ALLOW and APPROVAL_REQUIRED store the decision name", () => {
+  const base = { id: ID1, agent_id: ID2, action: "FILE_READ", created_at: TS, procurement_id: null, action_id: null, resource: "quotes/a" };
+  const ok = (e: object) => policyEventSchema.safeParse({ ...base, ...e }).success;
+  assert.equal(ok({ decision: "DENY", reason_code: "RESOURCE_OUT_OF_SCOPE" }), true);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "ALLOW" }), true);
+  assert.equal(ok({ decision: "APPROVAL_REQUIRED", reason_code: "APPROVAL_REQUIRED" }), true);
+  assert.equal(ok({ decision: "DENY", reason_code: "ALLOW" }), false, "a DENY cannot carry a success value");
+  assert.equal(ok({ decision: "DENY", reason_code: "APPROVAL_REQUIRED" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "RESOURCE_OUT_OF_SCOPE" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "APPROVAL_REQUIRED" }), false);
+  assert.equal(ok({ decision: "APPROVAL_REQUIRED", reason_code: "ALLOW" }), false);
+  assert.equal(ok({ decision: "ALLOW", reason_code: "MADE_UP" }), false);
+});
+
 test("gateway response: the three decisions parse; a DENY needs a D4 reason code", () => {
   const deny = {
     decision: "DENY",

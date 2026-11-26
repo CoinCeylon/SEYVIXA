@@ -4,3 +4,5 @@ packages:
   - "packages/*"
   - "tools/*"
   - "contracts/*"
+allowBuilds:
+  chacha-native: false
