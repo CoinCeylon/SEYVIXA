@@ -2,7 +2,7 @@
 
 Web UI shell for SEYVIXA TrustOS (UniHack 2026, Cardano + Midnight).
 
-Built with Next.js and Tailwind CSS (T9.1, Feature F9, Blueprint §4.3).
+Built with Next.js and Tailwind CSS (T9.1, T9.1b, Feature F9, Blueprint §4.3).
 
 ## Prerequisites
 
@@ -43,10 +43,20 @@ To run the production build:
 pnpm --filter @seyvixa/web start
 ```
 
-## Routes (Blueprint §4.3)
+## Layout & Components (Blueprint §4.3)
 
-The application provides exactly three connected screens sharing a single navigation bar in `app/layout.tsx`:
+The application provides a single shared layout in `app/layout.tsx` that appears on all screens:
 
-1. `/workspace` — **Procurement Workspace**: Create and follow procurement requests, compare suppliers, and display agent activity.
-2. `/trust` — **Trust & Approval Centre**: Show and control spending authority and evaluate/approve purchase actions.
-3. `/settlement` — **Settlement & Proof Centre**: Show Midnight eligibility verification, Cardano escrow state, and receipt generation.
+1. **Persistent Labels (`components/PersistentLabels.tsx`):**
+   - `"Simulated LKR budget — not real money"`
+   - `"Cardano testnet — test ADA has no monetary value"`
+   - LKR and test ADA are strictly kept separate with no currency conversion.
+
+2. **Workflow Stage Indicator (`components/StageIndicator.tsx`):**
+   - Displays the six workflow stages in strict sequence: `Request`, `Quotes`, `Eligibility`, `Approval`, `Escrow`, `Receipt`.
+   - Visual cues indicate current, completed, and upcoming stages.
+
+3. **Routes (Blueprint §4.3):**
+   - `/workspace` — **Procurement Workspace**: Create and follow procurement requests, compare suppliers, and display agent activity.
+   - `/trust` — **Trust & Approval Centre**: Show and control spending authority and evaluate/approve purchase actions.
+   - `/settlement` — **Settlement & Proof Centre**: Show Midnight eligibility verification, Cardano escrow state, and receipt generation.

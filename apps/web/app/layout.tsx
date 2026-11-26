@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import PersistentLabels from './components/PersistentLabels';
+import StageIndicator from './components/StageIndicator';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -44,6 +46,13 @@ export default function RootLayout({
             </nav>
           </div>
         </header>
+
+        {/* Persistent Labels from Blueprint Section 4.3 */}
+        <PersistentLabels />
+
+        {/* Workflow Stage Indicator from Blueprint Section 4.3 */}
+        <StageIndicator currentStage="Request" />
+
         <div className="mx-auto max-w-7xl">
           {children}
         </div>
