@@ -1,0 +1,11 @@
+{
+  "name": "@seyvixa/verifier",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test \"src/**/*.test.ts\"",
+    "verify": "node src/cli.ts"
+  }
+}
