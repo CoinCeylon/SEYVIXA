@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seyvixa.local/schemas/receipt.v0.schema.json",
+  "title": "SEYVIXA TrustOS Verifiable Receipt (v0, prototype format)",
+  "description": "v0, prototype format (not a standard). Covers both the 'full' view (owner/auditor under agreement) and the 'verification' view (privacy-minimised; rejects business details and resource names). Blueprint Section 6.8 (T8.5).",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/$defs/fullReceipt" },
+    { "$ref": "#/$defs/verificationReceipt" }
+  ],
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "isoDateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "isoUtcDateTime": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,9})?Z$"
+    },
+    "hex28Bytes": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{56}$"
+    },
+    "hex32Bytes": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "kid": {
+      "type": "string",
+      "description": "First 16 lowercase hex characters of SHA-256(raw 32-byte Ed25519 receipt public key). Receipts never embed a public key.",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "testnetAddress": {
+      "type": "string",
+      "description": "Cardano testnet Bech32 address (Preprod). Mainnet addr1... is rejected.",
+      "pattern": "^addr_test1[0-9a-z]+$"
+    },
+    "utxoRef": {
+      "type": "string",
+      "description": "Lock transaction ID and output index (<64-hex>#<index>).",
+      "pattern": "^[0-9a-f]{64}#(0|[1-9][0-9]*)$"
+    },
+    "reasonCode": {
+      "type": "string",
+      "enum": [
+        "AGENT_INACTIVE",
+        "GRANT_MISSING",
+        "GRANT_EXPIRED",
+        "GRANT_REVOKED",
+        "GRANT_INTEGRITY_FAILED",
+        "TOOL_OUT_OF_SCOPE",
+        "RESOURCE_OUT_OF_SCOPE",
+        "SPEND_LIMIT_EXCEEDED",
+        "BUDGET_EXCEEDED",
+        "RESERVATION_MISSING",
+        "APPROVAL_INVALID",
+        "APPROVAL_EXPIRED",
+        "APPROVAL_USED",
+        "PAYLOAD_HASH_MISMATCH",
+        "TICKET_INVALID",
+        "TICKET_EXPIRED",
+        "TICKET_USED",
+        "POLICY_VERSION_STALE",
+        "OWNER_MISMATCH",
+        "ACTION_NOT_EXECUTABLE",
+        "TX_MISMATCH",
+        "INTERNAL_ERROR",
+        "ALLOW",
+        "APPROVAL_REQUIRED"
+      ]
+    },
+    "approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nonce", "expires_at", "owner_key_hash", "signature"],
+      "properties": {
+        "nonce": { "type": "string", "minLength": 1 },
+        "expires_at": { "$ref": "#/$defs/isoDateTime" },
+        "owner_key_hash": { "$ref": "#/$defs/hex28Bytes" },
+        "signature": { "type": "string", "minLength": 1 },
+        "fallback_label": {
+          "type": "string",
+          "const": "approval key not bound to escrow buyer key (fallback)"
+        }
+      }
+    },
+    "chainEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network",
+        "script_address",
+        "escrow_utxo_ref",
+        "lock_tx_id",
+        "locked_lovelace",
+        "outcome"
+      ],
+      "properties": {
+        "network": {
+          "type": "string",
+          "enum": ["preprod"]
+        },
+        "script_address": { "$ref": "#/$defs/testnetAddress" },
+        "escrow_utxo_ref": { "$ref": "#/$defs/utxoRef" },
+        "lock_tx_id": { "$ref": "#/$defs/hex32Bytes" },
+        "locked_lovelace": { "type": "integer", "minimum": 1 },
+        "outcome": {
+          "type": "string",
+          "enum": ["locked", "released", "refunded"]
+        },
+        "release_tx_id": { "$ref": "#/$defs/hex32Bytes" },
+        "refund_tx_id": { "$ref": "#/$defs/hex32Bytes" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "outcome": { "const": "released" } } },
+          "then": {
+            "required": ["release_tx_id"],
+            "not": { "required": ["refund_tx_id"] }
+          }
+        },
+        {
+          "if": { "properties": { "outcome": { "const": "refunded" } } },
+          "then": {
+            "required": ["refund_tx_id"],
+            "not": { "required": ["release_tx_id"] }
+          }
+        },
+        {
+          "if": { "properties": { "outcome": { "const": "locked" } } },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["release_tx_id"] },
+                { "required": ["refund_tx_id"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "midnightEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supplier_id", "challenge_id", "verification_reference", "result"],
+      "properties": {
+        "supplier_id": { "$ref": "#/$defs/uuid" },
+        "challenge_id": { "$ref": "#/$defs/uuid" },
+        "verification_reference": { "type": "string", "minLength": 1 },
+        "result": { "type": "string", "minLength": 1 },
+        "fallback_label": { "type": "string", "minLength": 1 }
+      }
+    },
+    "actionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["description", "quantity"],
+      "properties": {
+        "description": { "type": "string", "minLength": 1 },
+        "quantity": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "approvedAction": {
+      "type": "object",
+      "description": "Group 6 business details (full view only; matches packages/shared/src/action-payload.ts).",
+      "additionalProperties": false,
+      "required": [
+        "procurement_id",
+        "owner_id",
+        "supplier_id",
+        "payee_address",
+        "items",
+        "total_lkr",
+        "settlement_asset",
+        "escrow_amount_tada",
+        "escrow_script_address",
+        "refund_deadline",
+        "expiry",
+        "nonce"
+      ],
+      "properties": {
+        "procurement_id": { "$ref": "#/$defs/uuid" },
+        "owner_id": { "$ref": "#/$defs/uuid" },
+        "supplier_id": { "$ref": "#/$defs/uuid" },
+        "payee_address": { "$ref": "#/$defs/testnetAddress" },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/actionItem" }
+        },
+        "total_lkr": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d{0,11})\\.\\d{2}$"
+        },
+        "settlement_asset": { "const": "tADA" },
+        "escrow_amount_tada": {
+          "type": "string",
+          "pattern": "^(0|[1-9]\\d{0,11})\\.\\d{6}$"
+        },
+        "escrow_script_address": { "$ref": "#/$defs/testnetAddress" },
+        "refund_deadline": { "$ref": "#/$defs/isoUtcDateTime" },
+        "expiry": { "$ref": "#/$defs/isoUtcDateTime" },
+        "nonce": { "type": "string", "minLength": 1 }
+      }
+    },
+    "fullPolicyDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "action_type", "decision", "resource", "reason_code"],
+      "properties": {
+        "agent": { "type": "string", "minLength": 1 },
+        "action_type": { "type": "string", "minLength": 1 },
+        "decision": { "type": "string", "enum": ["ALLOW", "DENY", "APPROVAL_REQUIRED"] },
+        "resource": { "type": ["string", "null"] },
+        "reason_code": { "$ref": "#/$defs/reasonCode" }
+      }
+    },
+    "fullPolicySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decisions"],
+      "properties": {
+        "decisions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fullPolicyDecision" }
+        }
+      }
+    },
+    "verificationPolicySummary": {
+      "type": "object",
+      "description": "Counts and reason codes only — never includes agent resource names or grant details.",
+      "additionalProperties": false,
+      "required": ["counts", "reason_codes"],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allow", "deny", "approval_required"],
+          "properties": {
+            "allow": { "type": "integer", "minimum": 0 },
+            "deny": { "type": "integer", "minimum": 0 },
+            "approval_required": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/reasonCode" }
+        }
+      }
+    },
+    "fullReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "view",
+        "receipt_id",
+        "created_at",
+        "kid",
+        "signature",
+        "procurement_id",
+        "approved_action",
+        "action_hash",
+        "approval",
+        "commitment_salt",
+        "chain",
+        "midnight",
+        "policy_summary"
+      ],
+      "properties": {
+        "schema_version": { "const": "receipt.v0" },
+        "view": { "const": "full" },
+        "receipt_id": { "$ref": "#/$defs/uuid" },
+        "created_at": { "$ref": "#/$defs/isoDateTime" },
+        "kid": { "$ref": "#/$defs/kid" },
+        "signature": { "type": "string", "minLength": 1 },
+        "procurement_id": { "$ref": "#/$defs/uuid" },
+        "approved_action": { "$ref": "#/$defs/approvedAction" },
+        "action_hash": { "$ref": "#/$defs/hex32Bytes" },
+        "approval": { "$ref": "#/$defs/approval" },
+        "commitment_salt": { "$ref": "#/$defs/hex32Bytes" },
+        "chain": { "$ref": "#/$defs/chainEvidence" },
+        "midnight": { "$ref": "#/$defs/midnightEvidence" },
+        "policy_summary": { "$ref": "#/$defs/fullPolicySummary" }
+      }
+    },
+    "verificationReceipt": {
+      "type": "object",
+      "description": "Privacy-minimised verification view. Rejects Group 6 business details (approved_action, budget, quotes) and resource names.",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "view",
+        "receipt_id",
+        "created_at",
+        "kid",
+        "signature",
+        "procurement_id",
+        "action_hash",
+        "approval",
+        "commitment_salt",
+        "chain",
+        "midnight",
+        "policy_summary"
+      ],
+      "properties": {
+        "schema_version": { "const": "receipt.v0" },
+        "view": { "const": "verification" },
+        "receipt_id": { "$ref": "#/$defs/uuid" },
+        "created_at": { "$ref": "#/$defs/isoDateTime" },
+        "kid": { "$ref": "#/$defs/kid" },
+        "signature": { "type": "string", "minLength": 1 },
+        "procurement_id": { "$ref": "#/$defs/uuid" },
+        "action_hash": { "$ref": "#/$defs/hex32Bytes" },
+        "approval": { "$ref": "#/$defs/approval" },
+        "commitment_salt": { "$ref": "#/$defs/hex32Bytes" },
+        "chain": { "$ref": "#/$defs/chainEvidence" },
+        "midnight": { "$ref": "#/$defs/midnightEvidence" },
+        "policy_summary": { "$ref": "#/$defs/verificationPolicySummary" }
+      }
+    }
+  }
+}
