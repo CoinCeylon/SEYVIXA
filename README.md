@@ -44,3 +44,13 @@ The application provides exactly three connected screens sharing a single naviga
   - `/workspace` — Procurement Workspace
   - `/trust` — Trust & Approval Centre
   - `/settlement` — Settlement & Proof Centre
+
+## Receipt Signing Key Fingerprint (T8.2, Blueprint §6.8)
+
+SEYVIXA signs verifiable receipts with a single Ed25519 key pair (public key committed at `keys/receipt-signing-public.json`; private key stays in server `.env` only and is never committed).
+
+- **Algorithm:** `Ed25519`
+- **Trusted Fingerprint (SHA-256 of raw 32-byte public key):** `3a21702b80f00a29165a1f101ad56446372c35299a9179dcfaea9ced70a75bba`
+- **Key ID (`kid`, first 16 hex chars):** `3a21702b80f00a29`
+- **Published date:** `2026-11-26`
+- **Policy:** Do not regenerate after publication. Copy the fingerprint above (and from the submission slide/documentation) into `--trusted-fingerprint` when running `tools/verifier`.
