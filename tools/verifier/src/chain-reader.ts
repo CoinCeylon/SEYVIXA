@@ -1,15 +1,24 @@
-// T8.3 — Cardano Preprod chain reader for `tools/verifier` (Blueprint Section 6.8).
+// T8.3 & T8.3b — Cardano Preprod chain reader for `tools/verifier` (Blueprint Section 6.8).
 // Reuses `getTxStatus` and `loadChainConfig` from `services/chain` (T7.1, read-only) so the
 // verifier uses the exact same Blockfrost Preprod configuration and confirmation depth rules.
-// Never logs or returns API keys. Never submits transactions.
+//
+// Official Blockfrost OpenAPI field references (https://docs.blockfrost.io/):
+//   GET /txs/{hash}                  -> valid_contract (boolean), invalid_before (string|null)
+//   GET /txs/{hash}/utxos            -> inputs[]: { tx_hash, output_index, collateral: boolean, reference: boolean }
+//                                       outputs[]: { address, output_index, amount[], inline_datum }
+//   GET /txs/{hash}/required_signers -> Array<{ witness_hash: string }>
+//
+// Security rules (T8.3b):
+// - Pin `witness_hash` only for required signers (never accept `hash`).
+// - Only count inputs with `collateral === false && reference === false` (fail closed if missing).
+// - Any malformed/null 200 response gives `unverifiable`, never a thrown error.
+// - Found-but-shallow transactions give `not_confirmed_depth` (-> UNVERIFIABLE);
+//   404 `not_found` gives `not_found` (-> REJECTED).
+// - Never logs or returns API keys. Never submits transactions.
 
+import { SLOT_CONFIG_NETWORK, slotToBeginUnixTime } from "@meshsdk/core";
 import { loadChainConfig, type ChainConfig } from "../../../services/chain/src/config.ts";
 import { getTxStatus, type TxStatus } from "../../../services/chain/src/tx-status.ts";
-
-// Cardano Preprod slot config (matches SLOT_CONFIG_NETWORK.preprod: zeroTime 1655769600000, zeroSlot 86400, 1000ms/slot).
-const PREPROD_ZERO_TIME_MS = 1_655_769_600_000n;
-const PREPROD_ZERO_SLOT = 86_400n;
-const PREPROD_SLOT_LENGTH_MS = 1_000n;
 
 const BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const BECH32_MAP = new Map<string, number>([...BECH32_CHARSET].map((c, i) => [c, i]));
@@ -26,6 +35,8 @@ export interface ParsedEscrowDatum {
 export interface ChainTxInput {
   readonly txHash: string;
   readonly outputIndex: number;
+  /** True only when Blockfrost explicitly reports `collateral === false && reference === false`. */
+  readonly isSpendInput: boolean;
 }
 
 export interface ChainTxOutput {
@@ -46,7 +57,8 @@ export interface ChainTxDetails {
 
 export type ChainTxLookupResult =
   | { readonly kind: "ok"; readonly status: TxStatus; readonly details: ChainTxDetails }
-  | { readonly kind: "not_confirmed"; readonly status: TxStatus }
+  | { readonly kind: "not_confirmed_depth"; readonly status: TxStatus }
+  | { readonly kind: "not_found"; readonly status: TxStatus }
   | { readonly kind: "invalid_contract"; readonly reason: string }
   | { readonly kind: "unverifiable"; readonly reason: string };
 
@@ -55,10 +67,80 @@ export interface VerifierChainReader {
 }
 
 /**
- * Converts a Cardano Preprod slot number to POSIXTime in milliseconds.
+ * Converts a Cardano Preprod slot number to POSIXTime in milliseconds using Mesh's
+ * official `SLOT_CONFIG_NETWORK.preprod` and `slotToBeginUnixTime`.
  */
 export function preprodSlotToPosixMs(slot: bigint): bigint {
-  return PREPROD_ZERO_TIME_MS + (slot - PREPROD_ZERO_SLOT) * PREPROD_SLOT_LENGTH_MS;
+  const slotNum = Number(slot);
+  if (!Number.isSafeInteger(slotNum) || slotNum < 0) {
+    throw new RangeError("Preprod slot must be a non-negative safe integer.");
+  }
+  return BigInt(slotToBeginUnixTime(slotNum, SLOT_CONFIG_NETWORK.preprod));
+}
+
+function bech32Polymod(values: readonly number[]): number {
+  let chk = 1;
+  for (const v of values) {
+    const top = chk >>> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i += 1) {
+      if (((top >>> i) & 1) !== 0) chk ^= BECH32_GENERATORS[i];
+    }
+  }
+  return chk;
+}
+
+function bech32HrpExpand(hrp: string): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < hrp.length; i += 1) out.push(hrp.charCodeAt(i) >>> 5);
+  out.push(0);
+  for (let i = 0; i < hrp.length; i += 1) out.push(hrp.charCodeAt(i) & 31);
+  return out;
+}
+
+/**
+ * Encodes a 28-byte lowercase hex payment key hash as a Cardano Preprod enterprise Bech32 address (`addr_test1v...`).
+ */
+export function encodeTestnetEnterpriseAddress(paymentKeyHashHex: string): string {
+  if (!/^[0-9a-f]{56}$/.test(paymentKeyHashHex)) {
+    throw new Error("paymentKeyHashHex must be 56 lowercase hex characters.");
+  }
+  const bytes = Buffer.concat([Buffer.from([0x60]), Buffer.from(paymentKeyHashHex, "hex")]);
+  let acc = 0;
+  let bits = 0;
+  const words: number[] = [];
+  for (const byte of bytes) {
+    acc = (acc << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      bits -= 5;
+      words.push((acc >>> bits) & 31);
+    }
+  }
+  if (bits > 0) words.push((acc << (5 - bits)) & 31);
+
+  const hrp = "addr_test";
+  const mod = bech32Polymod([...bech32HrpExpand(hrp), ...words, 0, 0, 0, 0, 0, 0]) ^ 1;
+  const checksum: number[] = [];
+  for (let i = 0; i < 6; i += 1) checksum.push((mod >>> (5 * (5 - i))) & 31);
+
+  let out = `${hrp}1`;
+  for (const w of [...words, ...checksum]) out += BECH32_CHARSET[w];
+  return out;
+}
+
+/**
+ * Extracts the 28-byte lowercase hex payment key hash from raw CIP-19 Shelley testnet key-hash address bytes.
+ * Returns `null` if not a Shelley testnet key-hash payment address.
+ */
+export function extractTestnetPaymentKeyHashFromBytes(bytes: Uint8Array): string | null {
+  if (bytes.length < 29) return null;
+  const header = bytes[0];
+  const addrType = (header >>> 4) & 0x0f;
+  const networkTag = header & 0x0f;
+  // Shelley payment key-hash addresses have even types 0x0, 0x2, 0x4, 0x6 and testnet tag 0.
+  if (networkTag !== 0 || addrType > 0x07 || (addrType & 1) !== 0) return null;
+  return Buffer.from(bytes.subarray(1, 29)).toString("hex");
 }
 
 /**
@@ -87,22 +169,8 @@ export function extractTestnetPaymentKeyHash(bech32Address: string): string | nu
     words.push(val);
   }
 
-  // Verify BIP-173 polymod checksum.
-  const expanded: number[] = [];
-  for (let i = 0; i < hrp.length; i += 1) expanded.push(hrp.charCodeAt(i) >>> 5);
-  expanded.push(0);
-  for (let i = 0; i < hrp.length; i += 1) expanded.push(hrp.charCodeAt(i) & 31);
-  let chk = 1;
-  for (const v of [...expanded, ...words]) {
-    const top = chk >>> 25;
-    chk = ((chk & 0x1ffffff) << 5) ^ v;
-    for (let i = 0; i < 5; i += 1) {
-      if (((top >>> i) & 1) !== 0) chk ^= BECH32_GENERATORS[i];
-    }
-  }
-  if (chk !== 1) return null;
+  if (bech32Polymod([...bech32HrpExpand(hrp), ...words]) !== 1) return null;
 
-  // Convert 5-bit payload words (excluding 6-word checksum) to bytes.
   let acc = 0;
   let bits = 0;
   const out: number[] = [];
@@ -115,21 +183,13 @@ export function extractTestnetPaymentKeyHash(bech32Address: string): string | nu
     }
   }
   if (bits >= 5 || ((acc << (8 - bits)) & 0xff) !== 0) return null;
-  if (out.length < 29) return null;
 
-  const header = out[0];
-  const addrType = (header >>> 4) & 0x0f;
-  const networkTag = header & 0x0f;
-  // Shelley payment key-hash addresses have even types 0x0, 0x2, 0x4, 0x6 and testnet tag 0.
-  if (networkTag !== 0 || addrType > 0x07 || (addrType & 1) !== 0) return null;
-
-  return Buffer.from(out.slice(1, 29)).toString("hex");
+  return extractTestnetPaymentKeyHashFromBytes(new Uint8Array(out));
 }
 
 /**
  * Decodes a Plutus `Constr 0 [buyer, supplier, locked_amount, refund_deadline, action_commitment]`
  * CBOR hex inline datum per `contracts/cardano/DATUM_SPEC.md`.
- * Returns `null` if the CBOR does not match the exact 5-field `EscrowDatum` structure.
  */
 export function decodeEscrowInlineDatumCbor(cborHex: string): ParsedEscrowDatum | null {
   if (typeof cborHex !== "string" || cborHex.length === 0 || cborHex.length % 2 !== 0 || !/^[0-9a-fA-F]+$/.test(cborHex)) {
@@ -191,7 +251,6 @@ export function decodeEscrowInlineDatumCbor(cborHex: string): ParsedEscrowDatum 
     return val;
   }
 
-  // Expect Plutus Constr 0 = CBOR Tag 121 (major 6, tag 121: 0xd8 0x79).
   if (offset >= buf.length) return null;
   const tagHead = buf[offset];
   offset += 1;
@@ -199,7 +258,6 @@ export function decodeEscrowInlineDatumCbor(cborHex: string): ParsedEscrowDatum 
   const tagNum = readUint(tagHead & 0x1f);
   if (tagNum !== 121n) return null;
 
-  // Expect CBOR array (definite length 5 or indefinite length 0x9f ... 0xff).
   if (offset >= buf.length) return null;
   const arrHead = buf[offset];
   offset += 1;
@@ -279,13 +337,17 @@ export function encodeEscrowInlineDatumCbor(datum: ParsedEscrowDatum): string {
 
   return Buffer.concat([
     encodeUint(6, 121n),
-    Buffer.from([0x85]), // 5-element definite array
+    Buffer.from([0x85]),
     encodeBstr(datum.buyer),
     encodeBstr(datum.supplier),
     encodeUint(0, datum.lockedAmountLovelace),
     encodeUint(0, datum.refundDeadlineMs),
     encodeBstr(datum.actionCommitment),
   ]).toString("hex");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 async function fetchBlockfrostJson(
@@ -315,7 +377,7 @@ async function fetchBlockfrostJson(
 
 /**
  * Creates a Blockfrost Preprod `VerifierChainReader` reusing `services/chain` `loadChainConfig`
- * and `getTxStatus` (T7.1). Never leaks secrets in error messages.
+ * and `getTxStatus` (T7.1). Fails closed on malformed responses, missing input flags, and invalid contracts.
  */
 export function createBlockfrostChainReader(deps: {
   config?: ChainConfig;
@@ -335,16 +397,23 @@ export function createBlockfrostChainReader(deps: {
       const status = await getTxStatus(txHash, { config, fetch: doFetch });
       if (status.status === "error") {
         if (status.reason === "contract_validation_failed") {
-          return { kind: "invalid_contract", reason: "Transaction failed Plutus script validation (valid_contract=false)." };
+          return {
+            kind: "invalid_contract",
+            reason: "Transaction failed Plutus script validation (valid_contract=false).",
+          };
         }
         if (status.reason === "invalid_tx_id") {
-          return { kind: "not_confirmed", status };
+          return { kind: "not_found", status };
         }
         return { kind: "unverifiable", reason: `Chain API unavailable (${status.reason}).` };
       }
 
+      if (status.status === "not_found") {
+        return { kind: "not_found", status };
+      }
+
       if (status.status !== "confirmed") {
-        return { kind: "not_confirmed", status };
+        return { kind: "not_confirmed_depth", status };
       }
 
       const [txRes, utxosRes, signersRes] = await Promise.all([
@@ -359,64 +428,98 @@ export function createBlockfrostChainReader(deps: {
         return { kind: "unverifiable", reason: signersRes.reason };
       }
 
-      const txObj = txRes.body as Record<string, unknown>;
-      if (txObj.valid_contract !== true) {
-        return { kind: "invalid_contract", reason: "Transaction failed Plutus script validation (valid_contract!=true)." };
+      // Guard against null, non-object, or missing required fields on 200 JSON responses (T8.3b Step 5).
+      if (!isPlainObject(txRes.body) || typeof txRes.body.valid_contract !== "boolean") {
+        return { kind: "unverifiable", reason: "Chain API returned malformed transaction response." };
+      }
+      if (txRes.body.valid_contract !== true) {
+        return {
+          kind: "invalid_contract",
+          reason: "Transaction failed Plutus script validation (valid_contract=false).",
+        };
       }
 
-      const invalidBeforeRaw = txObj.invalid_before;
-      const invalidBeforeSlot =
-        typeof invalidBeforeRaw === "string" && /^\d+$/.test(invalidBeforeRaw)
-          ? BigInt(invalidBeforeRaw)
-          : typeof invalidBeforeRaw === "number" && Number.isInteger(invalidBeforeRaw)
-            ? BigInt(invalidBeforeRaw)
-            : null;
+      const invalidBeforeRaw = txRes.body.invalid_before;
+      let invalidBeforeSlot: bigint | null;
+      if (invalidBeforeRaw === null || invalidBeforeRaw === undefined) {
+        invalidBeforeSlot = null;
+      } else if (typeof invalidBeforeRaw === "string" && /^\d+$/.test(invalidBeforeRaw)) {
+        invalidBeforeSlot = BigInt(invalidBeforeRaw);
+      } else if (typeof invalidBeforeRaw === "number" && Number.isInteger(invalidBeforeRaw) && invalidBeforeRaw >= 0) {
+        invalidBeforeSlot = BigInt(invalidBeforeRaw);
+      } else {
+        return { kind: "unverifiable", reason: "Chain API returned malformed invalid_before slot." };
+      }
 
-      const utxosObj = utxosRes.body as {
-        inputs?: Array<{ tx_hash?: unknown; output_index?: unknown }>;
-        outputs?: Array<{
-          address?: unknown;
-          output_index?: unknown;
-          amount?: Array<{ unit?: unknown; quantity?: unknown }>;
-          inline_datum?: unknown;
-        }>;
-      };
+      if (
+        !isPlainObject(utxosRes.body) ||
+        !Array.isArray(utxosRes.body.inputs) ||
+        !Array.isArray(utxosRes.body.outputs)
+      ) {
+        return { kind: "unverifiable", reason: "Chain API returned malformed UTxO response." };
+      }
 
-      const inputs: ChainTxInput[] = (Array.isArray(utxosObj.inputs) ? utxosObj.inputs : [])
-        .filter((i) => typeof i.tx_hash === "string" && typeof i.output_index === "number")
-        .map((i) => ({ txHash: i.tx_hash as string, outputIndex: i.output_index as number }));
-
-      const outputs: ChainTxOutput[] = (Array.isArray(utxosObj.outputs) ? utxosObj.outputs : [])
-        .filter((o) => typeof o.address === "string" && typeof o.output_index === "number")
-        .map((o) => {
-          const lovelaceEntry = Array.isArray(o.amount)
-            ? o.amount.find((a) => a.unit === "lovelace" && typeof a.quantity === "string")
-            : undefined;
-          const lovelace =
-            lovelaceEntry && /^\d+$/.test(lovelaceEntry.quantity as string)
-              ? BigInt(lovelaceEntry.quantity as string)
-              : 0n;
-          return {
-            address: o.address as string,
-            outputIndex: o.output_index as number,
-            lovelace,
-            inlineDatumHex: typeof o.inline_datum === "string" ? o.inline_datum : null,
-          };
+      // T8.3b Blocker 4: Only count inputs where Blockfrost explicitly sets
+      // `collateral === false && reference === false`. Missing flags fail closed (isSpendInput: false).
+      const inputs: ChainTxInput[] = [];
+      for (const rawInput of utxosRes.body.inputs) {
+        if (!isPlainObject(rawInput)) {
+          return { kind: "unverifiable", reason: "Chain API returned non-object UTxO input." };
+        }
+        if (typeof rawInput.tx_hash !== "string" || typeof rawInput.output_index !== "number") {
+          return { kind: "unverifiable", reason: "Chain API returned UTxO input missing tx_hash or output_index." };
+        }
+        const isSpendInput = rawInput.collateral === false && rawInput.reference === false;
+        inputs.push({
+          txHash: rawInput.tx_hash,
+          outputIndex: rawInput.output_index,
+          isSpendInput,
         });
+      }
 
-      const signersBody = signersRes.ok ? signersRes.body : [];
-      const requiredSigners: string[] = Array.isArray(signersBody)
-        ? signersBody
-            .map((s) =>
-              typeof s === "string"
-                ? s
-                : s && typeof s === "object" && typeof (s as { hash?: unknown }).hash === "string"
-                  ? ((s as { hash: string }).hash)
-                  : null,
-            )
-            .filter((s): s is string => s !== null)
-            .map((s) => s.toLowerCase())
-        : [];
+      const outputs: ChainTxOutput[] = [];
+      for (const rawOutput of utxosRes.body.outputs) {
+        if (!isPlainObject(rawOutput)) {
+          return { kind: "unverifiable", reason: "Chain API returned non-object UTxO output." };
+        }
+        if (
+          typeof rawOutput.address !== "string" ||
+          typeof rawOutput.output_index !== "number" ||
+          !Array.isArray(rawOutput.amount)
+        ) {
+          return { kind: "unverifiable", reason: "Chain API returned malformed UTxO output." };
+        }
+        const lovelaceEntry = rawOutput.amount.find(
+          (a) => isPlainObject(a) && a.unit === "lovelace" && typeof a.quantity === "string",
+        ) as { quantity?: string } | undefined;
+        const lovelace =
+          lovelaceEntry?.quantity && /^\d+$/.test(lovelaceEntry.quantity)
+            ? BigInt(lovelaceEntry.quantity)
+            : 0n;
+        outputs.push({
+          address: rawOutput.address,
+          outputIndex: rawOutput.output_index,
+          lovelace,
+          inlineDatumHex: typeof rawOutput.inline_datum === "string" ? rawOutput.inline_datum : null,
+        });
+      }
+
+      // T8.3b Blocker 3: Pin official Blockfrost field `witness_hash` only (never accept `hash`).
+      const requiredSigners: string[] = [];
+      if (signersRes.ok) {
+        if (!Array.isArray(signersRes.body)) {
+          return { kind: "unverifiable", reason: "Chain API returned malformed required_signers response." };
+        }
+        for (const entry of signersRes.body) {
+          if (!isPlainObject(entry) || typeof entry.witness_hash !== "string") {
+            return {
+              kind: "unverifiable",
+              reason: "Chain API required_signers entry missing documented witness_hash field.",
+            };
+          }
+          requiredSigners.push(entry.witness_hash.toLowerCase());
+        }
+      }
 
       return {
         kind: "ok",

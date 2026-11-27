@@ -78,12 +78,21 @@
     "approval": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["nonce", "expires_at", "owner_key_hash", "signature"],
+      "required": ["nonce", "expires_at", "owner_key_hash", "signature", "key"],
       "properties": {
         "nonce": { "type": "string", "minLength": 1 },
         "expires_at": { "$ref": "#/$defs/isoDateTime" },
         "owner_key_hash": { "$ref": "#/$defs/hex28Bytes" },
-        "signature": { "type": "string", "minLength": 1 },
+        "signature": {
+          "type": "string",
+          "description": "CIP-30 signData COSE_Sign1 as lowercase even-length hex CBOR.",
+          "pattern": "^([0-9a-f]{2})+$"
+        },
+        "key": {
+          "type": "string",
+          "description": "CIP-30 signData COSE_Key as lowercase even-length hex CBOR. Not trusted on its own: verifier checks Blake2b-224(pubKey) === owner_key_hash === on-chain datum buyer.",
+          "pattern": "^([0-9a-f]{2})+$"
+        },
         "fallback_label": {
           "type": "string",
           "const": "approval key not bound to escrow buyer key (fallback)"

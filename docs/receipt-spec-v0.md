@@ -37,7 +37,7 @@ The receipt generator (`generateReceipt(procurementId, view)`, T8.1) produces tw
 |---|---|---|---|---|---|
 | 1. Metadata | `schema_version`, `view`, `receipt_id`, `created_at`, `kid`, `signature` | Public-safe | Yes | Yes | Yes |
 | 2. On-chain evidence | `network`, `script_address`, `escrow_utxo_ref`, `lock_tx_id`, `release_tx_id` or `refund_tx_id`, `locked_lovelace`, `outcome` | Already public on the blockchain | Yes | Yes | Yes (publishing it links the receipt to these on-chain items) |
-| 3. Binding evidence | `action_hash`, `nonce`, `expires_at`, `owner_key_hash`, approval signature, `commitment_salt` | Linkable. Lets anyone connect the receipt to the escrow and test guesses about the action | Yes | Yes | No |
+| 3. Binding evidence | `action_hash`, `nonce`, `expires_at`, `owner_key_hash`, approval `signature` (COSE_Sign1) & `key` (COSE_Key), `commitment_salt` | Linkable. Lets anyone connect the receipt to the escrow and test guesses about the action | Yes | Yes | No |
 | 4. Midnight evidence | `supplier_id`, `challenge_id`, `verification_reference`, `result` | Links a supplier to a procurement | Yes | Yes | No |
 | 5. Policy summary | Decisions with agent, action type, resource name and reason code | Resource names and grants can be confidential | Full detail | Counts and reason codes only | No |
 | 6. Business details | `approved_action` (supplier, items, quantities, simulated LKR total and prices, deadlines), budget figures, quote contents | Confidential business information | Yes | **No** | **No** |
@@ -94,7 +94,8 @@ The receipt generator (`generateReceipt(procurementId, view)`, T8.1) produces tw
     "nonce": "demo-nonce-001",
     "expires_at": "2026-11-26T12:30:00.000Z",
     "owner_key_hash": "9493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e",
-    "signature": "simulated-cip30-cose-sign1-hex"
+    "signature": "845846a2012767616464726573735839009493315cd92eb5",
+    "key": "a4010103272006215820deadbeefcafebabe0123456789abcdef0123456789abcdef"
   },
   "commitment_salt": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "chain": {
@@ -154,7 +155,8 @@ The receipt generator (`generateReceipt(procurementId, view)`, T8.1) produces tw
     "nonce": "demo-nonce-001",
     "expires_at": "2026-11-26T12:30:00.000Z",
     "owner_key_hash": "9493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e",
-    "signature": "simulated-cip30-cose-sign1-hex"
+    "signature": "845846a2012767616464726573735839009493315cd92eb5",
+    "key": "a4010103272006215820deadbeefcafebabe0123456789abcdef0123456789abcdef"
   },
   "commitment_salt": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "chain": {
