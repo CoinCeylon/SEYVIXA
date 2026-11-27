@@ -1,0 +1,29 @@
+{
+  "procurement_id": "40000000-0000-4000-8000-000000000001",
+  "midnight": {
+    "level": 2,
+    "fallback_label": "Midnight toolchain demo (example contract). Supplier eligibility is simulated.",
+    "supplier_id": "50000000-0000-4000-8000-00000000000a",
+    "issuer_ref": "SEYVIXA Demo Supplier Registry (simulated)",
+    "verification_date": "2026-11-27T18:00:00.000Z",
+    "challenge_nonce": "c4b9679624956cf3da5ff46eef2d04a6e8e04b407a1b0239cf208b2dc11579b1",
+    "is_verified": true
+  },
+  "cardano": {
+    "level": 1,
+    "fallback_label": "Cardano testnet escrow (buyer-controlled prototype)",
+    "script_address": "addr_test1wr0slpaxzct7xmln7m0fg3vklf33jkqw4x0fzxze5z473hgyk5pf0",
+    "locked_amount_tada": "5.000000",
+    "lock_tx_id": "81d0df508315e3dc2d7a160d0f524dc9a07c146ed8deb8258edf65b637f947c8",
+    "lock_explorer_url": "https://preprod.cardanoscan.io/transaction/81d0df508315e3dc2d7a160d0f524dc9a07c146ed8deb8258edf65b637f947c8",
+    "release_tx_id": "f29ebca4216fd1d0ece8167a4a868555afded85a8c3a7637fdd8b58baa279a74",
+    "release_explorer_url": "https://preprod.cardanoscan.io/transaction/f29ebca4216fd1d0ece8167a4a868555afded85a8c3a7637fdd8b58baa279a74",
+    "status": "RELEASED"
+  },
+  "receipt": {
+    "receipt_id": "rcpt_40000000000040008000000000000001",
+    "verified": true,
+    "tampered": false,
+    "key_fingerprint": "f1453ddd03391484f2128eaf1a5cef480bf755e7ed1ee89a3244a27c20e7b1e1"
+  }
+}

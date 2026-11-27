@@ -1,0 +1,36 @@
+[
+  {
+    "id": "30000000-0000-4000-8000-000000000001",
+    "agent_id": "20000000-0000-4000-8000-000000000001",
+    "owner_id": "10000000-0000-4000-8000-000000000001",
+    "scopes": [
+      "supplier:search",
+      "quote:read",
+      "file:read",
+      "proposal:prepare",
+      "resource:suppliers/*",
+      "resource:quotes/*"
+    ],
+    "spend_limit": "120000.00",
+    "expires_at": "2026-12-31T23:59:59.000Z",
+    "revoked_at": null,
+    "issuer": "seyvixa-seed",
+    "integrity_tag": "a90406e3422aec797e09d0a5fbd9da1f2894f36b58e005e3a5723ee36bc9648b"
+  },
+  {
+    "id": "30000000-0000-4000-8000-000000000002",
+    "agent_id": "20000000-0000-4000-8000-000000000002",
+    "owner_id": "10000000-0000-4000-8000-000000000001",
+    "scopes": [
+      "budget:read",
+      "budget:check",
+      "budget:reserve",
+      "resource:budget/*"
+    ],
+    "spend_limit": "120000.00",
+    "expires_at": "2026-12-31T23:59:59.000Z",
+    "revoked_at": null,
+    "issuer": "seyvixa-seed",
+    "integrity_tag": "f30a5408461ddf2df269ee7a23008ddabd345b97675f5fc233c85b24cf3b080f"
+  }
+]
