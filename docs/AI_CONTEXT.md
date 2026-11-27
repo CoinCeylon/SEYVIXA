@@ -44,3 +44,4 @@ General AI security platform; agent marketplace or registry; delegation graphs; 
 4. Do not add features, even if a model suggests them. Wait for approval on large tasks.
 5. Cite the task ID and the Blueprint section in every change. Small commits (`type(scope): message`).
 6. Before the PR, run `docs/prompts/REVIEW.md` on your diff.
+7. Read `docs/STATUS.md` for what is built and open. Work only on the task Abdul assigned you; when it is done, stop and report. Do not suggest or start another task.
