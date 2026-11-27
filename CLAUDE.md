@@ -31,3 +31,5 @@ Only AI agents are enforced in the MVP. Staff and software are a future extensio
 - If anything is unclear or missing, stop and ask. Never invent endpoints, fields, libraries or APIs.
 - Niche tech (Compact, Aiken, Mesh, CIP-30, COSE): use pinned versions and official docs; test for real.
 - Small commits. One task per session.
+- Work only on the task card you were given (`docs/prompts/<member>/`) or the task Abdul named. When it is done, stop and report. Do not suggest, plan or start any other task, even one listed in docs/guide.md. If asked "what's next", answer: ask Abdul. The next task comes only from Abdul.
+- Security-critical paths (`tools/verifier`, `keys/`, `tools/keygen`, `apps/api`, `contracts/cardano`, escrow and receipt code) need a review by someone other than the author before merge. Never merge your own PR on these paths (decision D42).
