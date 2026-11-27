@@ -81,3 +81,25 @@ aiken address --validator escrow
 
 - **Compiled blueprint:** [`contracts/cardano/plutus.json`](plutus.json) (Plutus V3)
 - **Preprod script address (`escrow`):** `addr_test1wr0slpaxzct7xmln7m0fg3vklf33jkqw4x0fzxze5z473hgyk5pf0`
+
+---
+
+## 6. Manual Testnet Lock & Release (T6.4)
+
+Run the automated Preprod testnet escrow script:
+
+1. Add your Preprod wallet mnemonic to your local `.env`:
+   ```env
+   PREPROD_WALLET_MNEMONIC="word1 word2 word3 ... word24"
+   ```
+2. Run the script:
+   ```bash
+   node contracts/cardano/scripts/manual-escrow.mjs
+   ```
+3. The script will:
+   - Connect to Cardano Preprod via Blockfrost.
+   - Build, sign, and submit the **Lock Transaction** (locks 5 tADA at script address with `EscrowDatum`).
+   - Wait for block confirmation.
+   - Build, sign, and submit the **Release Transaction** (Plutus V3 spending input, `Release` redeemer, buyer signature, pays 5 tADA to supplier).
+   - Wait for block confirmation.
+   - Automatically record transaction hashes and CardanoScan explorer links in `docs/evidence/T6.4-cardano-testnet.md`.
