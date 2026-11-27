@@ -14,7 +14,7 @@ A task is yours only when it is listed here for you or Abdul sends you a card. A
 | Afnan | none open from batch 1 | Abdul assigns |
 | Divejikan | T8.2b (key generator safety), the real Preprod run for T8.3b | Abdul assigns |
 | Prabhath | T0.4b (seed script, no PR yet), then T4.2 after T4.1a | Abdul assigns |
-| Shahnas | T9.4, T9.5a to T9.5c, T10.2 | Abdul assigns |
+| Shahnas | T10.2 (T9.4, T9.5a to T9.5c are merged) | Abdul assigns |
 
 Security-critical paths (`tools/verifier`, `keys/`, `tools/keygen`, `apps/api`, `contracts/cardano`, escrow and receipt code) need a review by someone other than the author before merge (decision D42).
 

@@ -37,5 +37,6 @@ docs/*
 !docs/blueprint-v4.4.md
 !docs/guide.md
 !docs/receipt-spec-v0.md
+!docs/STATUS.md
 !docs/prompts/
 !docs/prompts/**
