@@ -11,7 +11,7 @@ A task is yours only when it is listed here for you or Abdul sends you a card. A
 | Member | Open card(s) | Next |
 |---|---|---|
 | Abdul | T1.2c, T1.6, T1.5, T4.1a to T4.1c, I2 | Abdul decides |
-| Afnan | none open from batch 1 | Abdul assigns |
+| Afnan | none assigned yet. Drafts for Abdul to review: [T5.4](afnan/T5.4.md), [T6.5](afnan/T6.5.md), [T6.6](afnan/T6.6.md). Do not start a draft until Abdul tells you | Abdul assigns |
 | Divejikan | T8.2b (key generator safety), the real Preprod run for T8.3b | Abdul assigns |
 | Prabhath | T0.4b (seed script, no PR yet), then T4.2 after T4.1a | Abdul assigns |
 | Shahnas | T10.2 (T9.4, T9.5a to T9.5c are merged) | Abdul assigns |
