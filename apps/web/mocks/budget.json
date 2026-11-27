@@ -1,0 +1,17 @@
+{
+  "procurement_id": "40000000-0000-4000-8000-000000000001",
+  "total_budget_lkr": "120000.00",
+  "reserved_lkr": "70000.00",
+  "committed_lkr": "0.00",
+  "remaining_lkr": "50000.00",
+  "reservations": [
+    {
+      "id": "70000000-0000-4000-8000-000000000001",
+      "procurement_id": "40000000-0000-4000-8000-000000000001",
+      "agent_id": "20000000-0000-4000-8000-000000000002",
+      "amount": "70000.00",
+      "status": "RESERVED",
+      "idempotency_key": "res_idem_proc_4001_sup_a"
+    }
+  ]
+}

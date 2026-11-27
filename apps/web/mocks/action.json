@@ -1,0 +1,19 @@
+{
+  "procurement_id": "40000000-0000-4000-8000-000000000001",
+  "owner_id": "10000000-0000-4000-8000-000000000001",
+  "supplier_id": "50000000-0000-4000-8000-00000000000a",
+  "payee_address": "addr_test1vqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqscyrspc",
+  "items": [
+    {
+      "description": "Guest kit (100 kits: soap, shampoo, towel, slippers)",
+      "quantity": 100
+    }
+  ],
+  "total_lkr": "70000.00",
+  "settlement_asset": "tADA",
+  "escrow_amount_tada": "5.000000",
+  "escrow_script_address": "addr_test1wr0slpaxzct7xmln7m0fg3vklf33jkqw4x0fzxze5z473hgyk5pf0",
+  "refund_deadline": "2026-12-05T23:59:59.000Z",
+  "expiry": "2026-11-28T12:00:00.000Z",
+  "nonce": "action-nonce-demo-4001"
+}
