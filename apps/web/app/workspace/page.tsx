@@ -1,6 +1,7 @@
 import React from 'react';
 import RequestForm from '../components/RequestForm';
 import QuoteTable from '../components/QuoteTable';
+import AgentFeed from '../components/AgentFeed';
 
 export default function WorkspacePage() {
   return (
@@ -16,14 +17,19 @@ export default function WorkspacePage() {
           </p>
         </div>
 
-        {/* Screen 1 Component: Request Form (T9.5a) */}
+        {/* Screen 1 Component 1: Request Form (T9.5a) */}
         <section aria-label="Procurement Request">
           <RequestForm />
         </section>
 
-        {/* Screen 1 Component: Supplier Quote Comparison (T9.5b) */}
+        {/* Screen 1 Component 2: Supplier Quote Comparison (T9.5b) */}
         <section aria-label="Supplier Quotes">
           <QuoteTable />
+        </section>
+
+        {/* Screen 1 Component 3: Agent Activity Feed (T9.5c) */}
+        <section aria-label="Agent Activity Feed">
+          <AgentFeed />
         </section>
       </div>
     </div>
