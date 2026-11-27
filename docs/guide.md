@@ -52,6 +52,8 @@
 
 ## 0. How to use this guide
 
+**A task is yours only when Abdul has assigned it to you by name** (a task card in `docs/prompts/<your name>/`, or a message from Abdul). This guide lists every task for every member so the whole plan is visible. It is a map, not a queue: do not pick a task from it yourself, and do not start one because your AI tool suggested it. When your assigned task is done, stop and report. Abdul assigns the next one.
+
 1.  Read Sections 1 to 5. Everyone reads these.
 2.  Read your own member section in Section 6.
 3.  Read the Blueprint sections listed in your member card.
