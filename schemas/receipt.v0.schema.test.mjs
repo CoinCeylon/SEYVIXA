@@ -27,7 +27,8 @@ function makeVerificationReceipt() {
       nonce: "demo-nonce-001",
       expires_at: "2026-11-26T12:30:00.000Z",
       owner_key_hash: "9493315cd92eb5d8c4304e67b7e16ae36d61d34502694657811a2c8e",
-      signature: "simulated-cip30-cose-sign1-hex",
+      signature: "845846a2012767616464726573735839009493315cd92eb5",
+      key: "a4010103272006215820deadbeefcafebabe0123456789abcdef0123456789abcdef",
     },
     commitment_salt: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     chain: {
@@ -120,6 +121,10 @@ describe("T8.5 — receipt.v0.schema.json validation", () => {
     const releasedWithoutTx = makeVerificationReceipt();
     delete releasedWithoutTx.chain.release_tx_id;
     assert.equal(validateReceiptV0(releasedWithoutTx).valid, false);
+
+    const missingApprovalKey = makeVerificationReceipt();
+    delete missingApprovalKey.approval.key;
+    assert.equal(validateReceiptV0(missingApprovalKey).valid, false);
   });
 
   it("rejects a verification view containing Group 6 business details or resource names", () => {

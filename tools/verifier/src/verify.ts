@@ -1,34 +1,51 @@
-// T8.3 — Standalone receipt verifier core (Blueprint Section 6.8; Section 9 item 12).
+// T8.3 & T8.3b — Standalone receipt verifier core (Blueprint Section 6.5, 6.8; Section 9 item 12).
 // Verifies a SEYVIXA receipt without trusting the web app or database.
-// Checks 1 to 6 in strict order; stops immediately if Check 1 fails (pinned key / schema / signature).
-// Returns VERIFIED, REJECTED, or UNVERIFIABLE (never reports UNVERIFIABLE as VERIFIED).
-// Zero new dependencies: reuses packages/shared (read-only), schemas/validate-receipt-v0.mjs,
-// keys/receipt-signing-public.json, and services/chain (T7.1, read-only).
+//
+// Security guarantees (T8.3b):
+// - Check 1 stops immediately on failure (pinned Ed25519 receipt key, kid, schema, signature).
+// - Check 2 verifies CIP-30 `signData` (COSE_Sign1 + COSE_Key) using pinned `@meshsdk/core` 1.9.1
+//   `checkSignature` (Blake2b-224 key hash + COSE Sig_structure Ed25519 signature) AND verifies the
+//   COSE_Sign1 protected header (`alg === -8` EdDSA and `address` payment credential === `owner_key_hash`).
+// - `owner_key_hash` MUST equal `onChainDatum.buyer` (otherwise REJECTED, unless exact fallback label
+//   is present, in which case Check 2 reports a distinct fallback status shown on the verdict line).
+// - Reuses `computeActionCommitment` from `services/chain/src/lock-tx.ts` (read-only).
+// - Full view cross-checks `approved_action` against chain evidence (script, payee, amount, deadline).
+// - Shallow/unconfirmed transactions give UNVERIFIABLE ("not yet confirmed to the required depth");
+//   404 not_found gives REJECTED. UNVERIFIABLE is never reported as VERIFIED.
 
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkSignature } from "@meshsdk/core";
 import { canonicalize } from "../../../packages/shared/src/canonical.ts";
 import { actionHash } from "../../../packages/shared/src/hash.ts";
 import { validateReceiptV0 } from "../../../schemas/validate-receipt-v0.mjs";
+import { computeActionCommitment, tadaToLovelace } from "../../../services/chain/src/lock-tx.ts";
 import {
   createBlockfrostChainReader,
   decodeEscrowInlineDatumCbor,
+  encodeTestnetEnterpriseAddress,
   extractTestnetPaymentKeyHash,
+  extractTestnetPaymentKeyHashFromBytes,
   preprodSlotToPosixMs,
   type ParsedEscrowDatum,
   type VerifierChainReader,
 } from "./chain-reader.ts";
+
+export { computeActionCommitment };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 export const DEFAULT_PUBLIC_KEY_PATH = path.join(REPO_ROOT, "keys/receipt-signing-public.json");
 
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 const HEX_64_RE = /^[0-9a-f]{64}$/;
+const EVEN_LOWER_HEX_RE = /^([0-9a-f]{2})+$/;
 const APPROVAL_DOMAIN_TAG = "seyvixa-approval-v1";
-const ACTION_COMMITMENT_DOMAIN_TAG = "seyvixa-commit-v1";
-const FALLBACK_APPROVAL_LABEL = "approval key not bound to escrow buyer key (fallback)";
+export const FALLBACK_APPROVAL_LABEL = "approval key not bound to escrow buyer key (fallback)";
+export const FALLBACK_CHECK2_STATUS = "pass (fallback: approval key not bound to escrow buyer key)" as const;
+export const MIDNIGHT_HONEST_NOTE =
+  "Midnight verification rests on SEYVIXA's signature (independent Midnight proof check is not implemented; issuer is simulated).";
 
 const EMBEDDED_KEY_FIELDS = new Set([
   "public_key",
@@ -40,7 +57,7 @@ const EMBEDDED_KEY_FIELDS = new Set([
 ]);
 
 export type Verdict = "VERIFIED" | "REJECTED" | "UNVERIFIABLE";
-export type CheckStatus = "pass" | "fail" | "unverifiable";
+export type CheckStatus = "pass" | typeof FALLBACK_CHECK2_STATUS | "fail" | "unverifiable";
 
 export interface CheckResult {
   readonly check: number;
@@ -52,6 +69,8 @@ export interface CheckResult {
 export interface VerificationReport {
   readonly verdict: Verdict;
   readonly view: "full" | "verification" | "unknown";
+  readonly fallbackLabel: string | null;
+  readonly midnightNote: string;
   readonly checks: readonly CheckResult[];
 }
 
@@ -65,22 +84,19 @@ export interface ApprovalSignaturePayload {
 export type ApprovalVerifierFn = (input: {
   readonly payload: ApprovalSignaturePayload;
   readonly signature: string;
+  readonly key: string;
   readonly ownerKeyHash: string;
   readonly fallbackLabel?: string;
-}) => boolean;
+}) => Promise<boolean> | boolean;
 
 export interface VerifyReceiptDeps {
-  /** Path to the committed receipt public key JSON (defaults to `keys/receipt-signing-public.json`). */
+  /** Optional public key path override for unit tests (CLI always uses DEFAULT_PUBLIC_KEY_PATH). */
   readonly publicKeyPath?: string;
-  /** Optional already-loaded public key JSON object (useful for unit tests). */
+  /** Optional already-loaded public key JSON object for unit tests. */
   readonly publicKeyDoc?: unknown;
   /** Chain reader adapter (defaults to Blockfrost Preprod reader using services/chain T7.1 config). */
   readonly chainReader?: VerifierChainReader;
-  /**
-   * Optional owner approval signature verifier (Check 2).
-   * When omitted, verifies `approval.signature` as an Ed25519 signature (`<64-hex-pubkey>:<128-hex-sig>`
-   * format for standalone/fallback verification) over canonical `{ domain, action_hash, nonce, expires_at }`.
-   */
+  /** Optional owner approval verifier override for unit tests; defaults to CIP-30 COSE_Sign1 verifier. */
   readonly verifyOwnerApproval?: ApprovalVerifierFn;
 }
 
@@ -92,13 +108,27 @@ interface ReceiptShape {
   kid: string;
   signature: string;
   procurement_id: string;
-  approved_action?: Record<string, unknown>;
+  approved_action?: {
+    procurement_id: string;
+    owner_id: string;
+    supplier_id: string;
+    payee_address: string;
+    items: Array<{ description: string; quantity: number }>;
+    total_lkr: string;
+    settlement_asset: "tADA";
+    escrow_amount_tada: string;
+    escrow_script_address: string;
+    refund_deadline: string;
+    expiry: string;
+    nonce: string;
+  };
   action_hash: string;
   approval: {
     nonce: string;
     expires_at: string;
     owner_key_hash: string;
     signature: string;
+    key: string;
     fallback_label?: string;
   };
   commitment_salt: string;
@@ -129,18 +159,6 @@ export function isValidFingerprint(value: unknown): value is string {
 }
 
 /**
- * Computes `SHA-256("seyvixa-commit-v1" || raw(action_hash) || raw(commitment_salt))` as 64 lowercase hex.
- * Self-contained (does not import from unmerged T7.3 code).
- */
-export function computeActionCommitment(actionHashHex: string, commitmentSaltHex: string): string {
-  return createHash("sha256")
-    .update(Buffer.from(ACTION_COMMITMENT_DOMAIN_TAG, "utf8"))
-    .update(Buffer.from(actionHashHex, "hex"))
-    .update(Buffer.from(commitmentSaltHex, "hex"))
-    .digest("hex");
-}
-
-/**
  * Canonicalises a receipt object without its `signature` field (the exact bytes signed by Ed25519).
  */
 export function canonicalReceiptPayload(receipt: Record<string, unknown>): string {
@@ -154,31 +172,199 @@ export function canonicalReceiptPayload(receipt: Record<string, unknown>): strin
 }
 
 /**
- * Default Ed25519 owner approval verifier over canonical `{ domain, action_hash, nonce, expires_at }`.
- * Accepts `<64-hex-raw-ed25519-pubkey>:<128-hex-ed25519-sig>` and fails closed on any malformed or invalid signature.
+ * Parses the COSE_Sign1 protected header map to extract `alg` (header label 1, must be -8 for EdDSA)
+ * and `"address"` (CIP-8 raw Cardano address bytes). Fails closed on malformed CBOR.
  */
-export function defaultVerifyOwnerApproval(input: {
-  readonly payload: ApprovalSignaturePayload;
-  readonly signature: string;
-  readonly ownerKeyHash: string;
-  readonly fallbackLabel?: string;
-}): boolean {
-  const parts = input.signature.split(":");
-  if (parts.length !== 2) return false;
-  const [pubKeyHex, sigHex] = parts;
-  if (!/^[0-9a-f]{64}$/.test(pubKeyHex) || !/^[0-9a-f]{128}$/.test(sigHex)) {
+export function inspectCoseSign1ProtectedHeader(
+  coseSign1Hex: string,
+): { readonly alg: number | null; readonly addressBytes: Uint8Array | null } | null {
+  if (!EVEN_LOWER_HEX_RE.test(coseSign1Hex)) return null;
+  const buf = Buffer.from(coseSign1Hex, "hex");
+  let offset = 0;
+
+  function readUint(ai: number, src: Buffer, state: { o: number }): number | null {
+    if (ai < 24) return ai;
+    if (ai === 24 && state.o + 1 <= src.length) {
+      const v = src[state.o];
+      state.o += 1;
+      return v;
+    }
+    if (ai === 25 && state.o + 2 <= src.length) {
+      const v = src.readUInt16BE(state.o);
+      state.o += 2;
+      return v;
+    }
+    if (ai === 26 && state.o + 4 <= src.length) {
+      const v = src.readUInt32BE(state.o);
+      state.o += 4;
+      return v;
+    }
+    return null;
+  }
+
+  function skipItem(src: Buffer, state: { o: number }): boolean {
+    if (state.o >= src.length) return false;
+    const head = src[state.o];
+    state.o += 1;
+    const major = head >>> 5;
+    const ai = head & 0x1f;
+    if (major === 0 || major === 1) return readUint(ai, src, state) !== null;
+    if (major === 2 || major === 3) {
+      const len = readUint(ai, src, state);
+      if (len === null || state.o + len > src.length) return false;
+      state.o += len;
+      return true;
+    }
+    if (major === 4) {
+      const len = readUint(ai, src, state);
+      if (len === null) return false;
+      for (let i = 0; i < len; i += 1) if (!skipItem(src, state)) return false;
+      return true;
+    }
+    if (major === 5) {
+      const len = readUint(ai, src, state);
+      if (len === null) return false;
+      for (let i = 0; i < len; i += 1) {
+        if (!skipItem(src, state) || !skipItem(src, state)) return false;
+      }
+      return true;
+    }
+    if (major === 6) {
+      if (readUint(ai, src, state) === null) return false;
+      return skipItem(src, state);
+    }
+    if (major === 7) return ai < 24 || readUint(ai, src, state) !== null;
     return false;
   }
 
+  // Optional CBOR tag 18 (COSE_Sign1) followed by 4-element array (0x84).
+  const root = { o: offset };
+  if (root.o >= buf.length) return null;
+  if ((buf[root.o] >>> 5) === 6) {
+    const tagAi = buf[root.o] & 0x1f;
+    root.o += 1;
+    const tag = readUint(tagAi, buf, root);
+    if (tag !== 18) return null;
+  }
+  if (root.o >= buf.length || buf[root.o] !== 0x84) return null;
+  root.o += 1;
+
+  // Element 0: protected header byte string (major 2).
+  if (root.o >= buf.length || (buf[root.o] >>> 5) !== 2) return null;
+  const protAi = buf[root.o] & 0x1f;
+  root.o += 1;
+  const protLen = readUint(protAi, buf, root);
+  if (protLen === null || protLen === 0 || root.o + protLen > buf.length) return null;
+  const protBuf = buf.subarray(root.o, root.o + protLen);
+
+  // Decode protected header CBOR map (major 5).
+  const mapState = { o: 0 };
+  if ((protBuf[mapState.o] >>> 5) !== 5) return null;
+  const mapAi = protBuf[mapState.o] & 0x1f;
+  mapState.o += 1;
+  const entryCount = readUint(mapAi, protBuf, mapState);
+  if (entryCount === null) return null;
+
+  let alg: number | null = null;
+  let addressBytes: Uint8Array | null = null;
+
+  for (let i = 0; i < entryCount; i += 1) {
+    if (mapState.o >= protBuf.length) return null;
+    const keyHead = protBuf[mapState.o];
+    const keyMajor = keyHead >>> 5;
+    const keyAi = keyHead & 0x1f;
+
+    if (keyMajor === 0) {
+      mapState.o += 1;
+      const k = readUint(keyAi, protBuf, mapState);
+      if (k === null) return null;
+      if (k === 1) {
+        // COSE alg header: EdDSA is -8 (major 1, value 7 -> -1 - 7 = -8).
+        if (mapState.o >= protBuf.length) return null;
+        const valHead = protBuf[mapState.o];
+        const valMajor = valHead >>> 5;
+        const valAi = valHead & 0x1f;
+        mapState.o += 1;
+        const rawVal = readUint(valAi, protBuf, mapState);
+        if (rawVal === null) return null;
+        if (valMajor === 1) alg = -1 - rawVal;
+        else if (valMajor === 0) alg = rawVal;
+        else return null;
+      } else {
+        if (!skipItem(protBuf, mapState)) return null;
+      }
+    } else if (keyMajor === 3) {
+      mapState.o += 1;
+      const kLen = readUint(keyAi, protBuf, mapState);
+      if (kLen === null || mapState.o + kLen > protBuf.length) return null;
+      const kStr = protBuf.subarray(mapState.o, mapState.o + kLen).toString("utf8");
+      mapState.o += kLen;
+      if (kStr === "address") {
+        if (mapState.o >= protBuf.length || (protBuf[mapState.o] >>> 5) !== 2) return null;
+        const vAi = protBuf[mapState.o] & 0x1f;
+        mapState.o += 1;
+        const vLen = readUint(vAi, protBuf, mapState);
+        if (vLen === null || mapState.o + vLen > protBuf.length) return null;
+        addressBytes = new Uint8Array(protBuf.subarray(mapState.o, mapState.o + vLen));
+        mapState.o += vLen;
+      } else {
+        if (!skipItem(protBuf, mapState)) return null;
+      }
+    } else {
+      if (!skipItem(protBuf, mapState) || !skipItem(protBuf, mapState)) return null;
+    }
+  }
+
+  return { alg, addressBytes };
+}
+
+/**
+ * Verifies a CIP-30 `signData` (CIP-8 COSE_Sign1 + COSE_Key) owner approval using pinned
+ * `@meshsdk/core` 1.9.1 `checkSignature` plus COSE_Sign1 protected header validation
+ * (`alg === -8` EdDSA and protected `"address"` payment credential === `ownerKeyHash`).
+ *
+ * Security (T8.3b): The COSE_Key is NEVER trusted on its own. Passing the enterprise address
+ * derived from `ownerKeyHash` into Mesh's `checkSignature` enforces:
+ *   Blake2b-224(pubKeyFromCoseKey) === ownerKeyHash
+ * and verifies the Ed25519 signature over the COSE Sig_structure for the exact canonical message.
+ */
+export async function verifyCip30OwnerApproval(input: {
+  readonly payload: ApprovalSignaturePayload;
+  readonly signature: string;
+  readonly key: string;
+  readonly ownerKeyHash: string;
+  readonly fallbackLabel?: string;
+}): Promise<boolean> {
+  if (
+    !EVEN_LOWER_HEX_RE.test(input.signature) ||
+    !EVEN_LOWER_HEX_RE.test(input.key) ||
+    !/^[0-9a-f]{56}$/.test(input.ownerKeyHash)
+  ) {
+    return false;
+  }
+
+  // Step 1 & 5 (Blueprint §6.5): protected header must declare EdDSA (-8) and carry an address
+  // whose Shelley testnet payment key hash equals `ownerKeyHash`.
+  const header = inspectCoseSign1ProtectedHeader(input.signature);
+  if (header === null || header.alg !== -8 || header.addressBytes === null) {
+    return false;
+  }
+  const headerKeyHash = extractTestnetPaymentKeyHashFromBytes(header.addressBytes);
+  if (headerKeyHash !== input.ownerKeyHash) {
+    return false;
+  }
+
+  // Step 2 & 4 (Blueprint §6.5): Mesh `checkSignature` extracts the 32-byte Ed25519 key from COSE_Key,
+  // computes Blake2b-224(pubKey), checks it against `expectedEnterpriseAddr` (i.e. === ownerKeyHash),
+  // checks payload bytes === canonicalApprovalJson, and verifies Ed25519 over COSE Sig_structure.
   try {
-    const rawPub = Buffer.from(pubKeyHex, "hex");
-    const pubKeyObj = createPublicKey({
-      key: Buffer.concat([ED25519_SPKI_PREFIX, rawPub]),
-      format: "der",
-      type: "spki",
-    });
-    const canonicalMsg = Buffer.from(canonicalize(input.payload), "utf8");
-    return cryptoVerify(null, canonicalMsg, pubKeyObj, Buffer.from(sigHex, "hex"));
+    const expectedEnterpriseAddr = encodeTestnetEnterpriseAddress(input.ownerKeyHash);
+    const canonicalMessage = canonicalize(input.payload);
+    return await checkSignature(
+      canonicalMessage,
+      { key: input.key, signature: input.signature },
+      expectedEnterpriseAddr,
+    );
   } catch {
     return false;
   }
@@ -249,6 +435,38 @@ function deriveVerdict(checks: readonly CheckResult[]): Verdict {
   return "VERIFIED";
 }
 
+function crossCheckFullViewApprovedAction(
+  receipt: ReceiptShape,
+  lockDatum: ParsedEscrowDatum,
+): string | null {
+  const act = receipt.approved_action;
+  if (act === undefined) return "Full-view receipt is missing approved_action.";
+
+  if (actionHash(act) !== receipt.action_hash) {
+    return "Full-view recomputed action_hash does not match receipt action_hash.";
+  }
+  if (act.escrow_script_address !== receipt.chain.script_address) {
+    return "Full-view approved_action.escrow_script_address does not match receipt chain.script_address.";
+  }
+  const payeeKeyHash = extractTestnetPaymentKeyHash(act.payee_address);
+  if (payeeKeyHash === null || payeeKeyHash !== lockDatum.supplier) {
+    return "Full-view approved_action.payee_address does not match on-chain datum supplier key hash.";
+  }
+  try {
+    const approvedLovelace = tadaToLovelace(act.escrow_amount_tada);
+    if (approvedLovelace !== BigInt(receipt.chain.locked_lovelace)) {
+      return "Full-view approved_action.escrow_amount_tada does not match receipt chain.locked_lovelace.";
+    }
+  } catch {
+    return "Full-view approved_action.escrow_amount_tada is invalid.";
+  }
+  const approvedDeadlineMs = Date.parse(act.refund_deadline);
+  if (!Number.isFinite(approvedDeadlineMs) || BigInt(approvedDeadlineMs) !== lockDatum.refundDeadlineMs) {
+    return "Full-view approved_action.refund_deadline does not match on-chain datum refund_deadline.";
+  }
+  return null;
+}
+
 /**
  * Runs Checks 1 to 6 from Blueprint Section 6.8 on a parsed receipt object.
  * Stops immediately on Check 1 failure (trusted fingerprint, kid, schema, or receipt signature).
@@ -267,7 +485,7 @@ export async function verifyReceipt(
       status: "fail",
       message: "Missing or malformed --trusted-fingerprint (expected 64 lowercase hex characters).",
     });
-    return { verdict: "REJECTED", view: "unknown", checks };
+    return { verdict: "REJECTED", view: "unknown", fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   // Check 1a: Load pinned public key and compare recomputed fingerprint against --trusted-fingerprint.
@@ -279,7 +497,7 @@ export async function verifyReceipt(
       status: "fail",
       message: keyResult.message,
     });
-    return { verdict: "REJECTED", view: "unknown", checks };
+    return { verdict: "REJECTED", view: "unknown", fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   // Check 1b: Basic object check + reject embedded public key or unknown kid before schema check.
@@ -290,7 +508,7 @@ export async function verifyReceipt(
       status: "fail",
       message: "Receipt must be a JSON object.",
     });
-    return { verdict: "REJECTED", view: "unknown", checks };
+    return { verdict: "REJECTED", view: "unknown", fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   const rawReceipt = receiptInput as Record<string, unknown>;
@@ -305,7 +523,7 @@ export async function verifyReceipt(
       status: "fail",
       message: `Receipt embeds disallowed key/algorithm field "${embeddedField}".`,
     });
-    return { verdict: "REJECTED", view, checks };
+    return { verdict: "REJECTED", view, fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   if (rawReceipt.kid !== keyResult.kid) {
@@ -315,7 +533,7 @@ export async function verifyReceipt(
       status: "fail",
       message: `Unknown or mismatched receipt kid (expected "${keyResult.kid}").`,
     });
-    return { verdict: "REJECTED", view, checks };
+    return { verdict: "REJECTED", view, fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   // Check 1c: Validate receipt against schemas/receipt.v0.schema.json (T8.5).
@@ -327,7 +545,7 @@ export async function verifyReceipt(
       status: "fail",
       message: `Schema validation failed: ${schemaResult.errors[0] ?? "invalid receipt"}`,
     });
-    return { verdict: "REJECTED", view, checks };
+    return { verdict: "REJECTED", view, fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   const receipt = rawReceipt as unknown as ReceiptShape;
@@ -360,7 +578,7 @@ export async function verifyReceipt(
       status: "fail",
       message: "Ed25519 receipt signature verification failed.",
     });
-    return { verdict: "REJECTED", view: receipt.view, checks };
+    return { verdict: "REJECTED", view: receipt.view, fallbackLabel: null, midnightNote: MIDNIGHT_HONEST_NOTE, checks };
   }
 
   checks.push({
@@ -399,19 +617,26 @@ export async function verifyReceipt(
         status: "unverifiable",
         message: lockLookup.reason,
       };
+    } else if (lockLookup.kind === "not_confirmed_depth") {
+      lockCheck = {
+        check: 3,
+        name: "Lock transaction & inline datum",
+        status: "unverifiable",
+        message: "Lock transaction not yet confirmed to the required depth.",
+      };
+    } else if (lockLookup.kind === "not_found") {
+      lockCheck = {
+        check: 3,
+        name: "Lock transaction & inline datum",
+        status: "fail",
+        message: "Lock transaction was not found on Preprod (404).",
+      };
     } else if (lockLookup.kind === "invalid_contract") {
       lockCheck = {
         check: 3,
         name: "Lock transaction & inline datum",
         status: "fail",
         message: lockLookup.reason,
-      };
-    } else if (lockLookup.kind === "not_confirmed") {
-      lockCheck = {
-        check: 3,
-        name: "Lock transaction & inline datum",
-        status: "fail",
-        message: `Lock transaction is not confirmed (status: ${lockLookup.status.status}).`,
       };
     } else {
       const targetOutput = lockLookup.details.outputs.find(
@@ -474,8 +699,8 @@ export async function verifyReceipt(
     }
   }
 
-  // Check 2: Owner approval signature, full-view action_hash recomputation, and buyer key hash binding.
-  const approvalVerifier = deps.verifyOwnerApproval ?? defaultVerifyOwnerApproval;
+  // Check 2: Owner CIP-30 COSE_Sign1 approval, key-hash binding, and full-view cross-checks.
+  const approvalVerifier = deps.verifyOwnerApproval ?? verifyCip30OwnerApproval;
   const approvalPayload: ApprovalSignaturePayload = {
     domain: APPROVAL_DOMAIN_TAG,
     action_hash: receipt.action_hash,
@@ -483,10 +708,12 @@ export async function verifyReceipt(
     expires_at: receipt.approval.expires_at,
   };
 
+  let fallbackLabel: string | null = null;
   let check2: CheckResult;
-  const approvalSigOk = approvalVerifier({
+  const approvalSigOk = await approvalVerifier({
     payload: approvalPayload,
     signature: receipt.approval.signature,
+    key: receipt.approval.key,
     ownerKeyHash: receipt.approval.owner_key_hash,
     fallbackLabel: receipt.approval.fallback_label,
   });
@@ -496,7 +723,7 @@ export async function verifyReceipt(
       check: 2,
       name: "Owner approval & action hash",
       status: "fail",
-      message: "Owner approval signature verification failed.",
+      message: "Owner CIP-30 COSE_Sign1 approval signature or key-hash binding failed.",
     };
   } else if (
     receipt.view === "full" &&
@@ -509,13 +736,6 @@ export async function verifyReceipt(
       status: "fail",
       message: "Full-view recomputed action_hash does not match receipt action_hash.",
     };
-  } else if (receipt.approval.fallback_label === FALLBACK_APPROVAL_LABEL) {
-    check2 = {
-      check: 2,
-      name: "Owner approval & action hash",
-      status: "pass",
-      message: `Owner approval signature verified (${FALLBACK_APPROVAL_LABEL}).`,
-    };
   } else if (lockDatum === null) {
     check2 = {
       check: 2,
@@ -523,32 +743,51 @@ export async function verifyReceipt(
       status: lockCheck.status === "unverifiable" ? "unverifiable" : "fail",
       message:
         lockCheck.status === "unverifiable"
-          ? "Cannot confirm owner_key_hash === on-chain buyer key hash while chain API is unreachable."
+          ? "Cannot confirm owner_key_hash === on-chain buyer key hash while lock tx is unverifiable."
           : "Cannot confirm owner_key_hash === on-chain buyer key hash because lock datum check failed.",
     };
-  } else if (receipt.approval.owner_key_hash !== lockDatum.buyer) {
-    check2 = {
-      check: 2,
-      name: "Owner approval & action hash",
-      status: "fail",
-      message: "Approval owner_key_hash does not equal buyer key hash in on-chain datum.",
-    };
   } else {
-    check2 = {
-      check: 2,
-      name: "Owner approval & action hash",
-      status: "pass",
-      message:
-        receipt.view === "full"
-          ? "Owner approval signature, full-view action_hash, and owner_key_hash === datum.buyer verified."
-          : "Owner approval signature and owner_key_hash === datum.buyer verified (verification view).",
-    };
+    const fullViewMismatch =
+      receipt.view === "full" ? crossCheckFullViewApprovedAction(receipt, lockDatum) : null;
+    if (fullViewMismatch !== null) {
+      check2 = {
+        check: 2,
+        name: "Owner approval & action hash",
+        status: "fail",
+        message: fullViewMismatch,
+      };
+    } else if (receipt.approval.fallback_label === FALLBACK_APPROVAL_LABEL) {
+      fallbackLabel = FALLBACK_APPROVAL_LABEL;
+      check2 = {
+        check: 2,
+        name: "Owner approval & action hash",
+        status: FALLBACK_CHECK2_STATUS,
+        message: `Owner approval signature verified (${FALLBACK_APPROVAL_LABEL}).`,
+      };
+    } else if (receipt.approval.owner_key_hash !== lockDatum.buyer) {
+      check2 = {
+        check: 2,
+        name: "Owner approval & action hash",
+        status: "fail",
+        message: "Approval owner_key_hash does not equal buyer key hash in on-chain datum.",
+      };
+    } else {
+      check2 = {
+        check: 2,
+        name: "Owner approval & action hash",
+        status: "pass",
+        message:
+          receipt.view === "full"
+            ? "Owner COSE_Sign1 approval, full-view action_hash + chain cross-checks, and owner_key_hash === datum.buyer verified."
+            : "Owner COSE_Sign1 approval and owner_key_hash === datum.buyer verified (verification view).",
+      };
+    }
   }
 
   checks.push(check2);
   checks.push(lockCheck);
 
-  // Check 4: Action commitment matches on-chain datum.
+  // Check 4: Action commitment matches on-chain datum (using services/chain computeActionCommitment).
   let check4: CheckResult;
   if (lockDatum === null) {
     check4 = {
@@ -557,7 +796,7 @@ export async function verifyReceipt(
       status: lockCheck.status === "unverifiable" ? "unverifiable" : "fail",
       message:
         lockCheck.status === "unverifiable"
-          ? "Cannot verify action commitment while chain API is unreachable."
+          ? "Cannot verify action commitment while lock tx is unverifiable."
           : "Cannot verify action commitment without a valid on-chain lock datum.",
     };
   } else {
@@ -599,7 +838,7 @@ export async function verifyReceipt(
       status: lockCheck.status === "unverifiable" ? "unverifiable" : "fail",
       message:
         lockCheck.status === "unverifiable"
-          ? "Cannot verify settlement while chain API is unreachable."
+          ? "Cannot verify settlement while lock tx is unverifiable."
           : "Cannot verify settlement without a valid on-chain lock datum.",
     };
   } else if (receipt.chain.outcome === "released") {
@@ -615,20 +854,28 @@ export async function verifyReceipt(
       const relLookup = await chainReader.getTransaction(releaseTxId);
       if (relLookup.kind === "unverifiable") {
         check5 = { check: 5, name: "Settlement", status: "unverifiable", message: relLookup.reason };
-      } else if (relLookup.kind === "invalid_contract") {
-        check5 = { check: 5, name: "Settlement", status: "fail", message: relLookup.reason };
-      } else if (relLookup.kind === "not_confirmed") {
+      } else if (relLookup.kind === "not_confirmed_depth") {
+        check5 = {
+          check: 5,
+          name: "Settlement",
+          status: "unverifiable",
+          message: "Release transaction not yet confirmed to the required depth.",
+        };
+      } else if (relLookup.kind === "not_found") {
         check5 = {
           check: 5,
           name: "Settlement",
           status: "fail",
-          message: `Release transaction is not confirmed (status: ${relLookup.status.status}).`,
+          message: "Release transaction was not found on Preprod (404).",
         };
+      } else if (relLookup.kind === "invalid_contract") {
+        check5 = { check: 5, name: "Settlement", status: "fail", message: relLookup.reason };
       } else {
+        // T8.3b Blocker 4: only count real spend inputs (collateral === false && reference === false).
         const spendsEscrow =
           utxoRef !== null &&
           relLookup.details.inputs.some(
-            (i) => i.txHash === utxoRef.txHash && i.outputIndex === utxoRef.outputIndex,
+            (i) => i.isSpendInput && i.txHash === utxoRef.txHash && i.outputIndex === utxoRef.outputIndex,
           );
         const paysSupplier = relLookup.details.outputs.some(
           (o) =>
@@ -682,20 +929,27 @@ export async function verifyReceipt(
       const refLookup = await chainReader.getTransaction(refundTxId);
       if (refLookup.kind === "unverifiable") {
         check5 = { check: 5, name: "Settlement", status: "unverifiable", message: refLookup.reason };
-      } else if (refLookup.kind === "invalid_contract") {
-        check5 = { check: 5, name: "Settlement", status: "fail", message: refLookup.reason };
-      } else if (refLookup.kind === "not_confirmed") {
+      } else if (refLookup.kind === "not_confirmed_depth") {
+        check5 = {
+          check: 5,
+          name: "Settlement",
+          status: "unverifiable",
+          message: "Refund transaction not yet confirmed to the required depth.",
+        };
+      } else if (refLookup.kind === "not_found") {
         check5 = {
           check: 5,
           name: "Settlement",
           status: "fail",
-          message: `Refund transaction is not confirmed (status: ${refLookup.status.status}).`,
+          message: "Refund transaction was not found on Preprod (404).",
         };
+      } else if (refLookup.kind === "invalid_contract") {
+        check5 = { check: 5, name: "Settlement", status: "fail", message: refLookup.reason };
       } else {
         const spendsEscrow =
           utxoRef !== null &&
           refLookup.details.inputs.some(
-            (i) => i.txHash === utxoRef.txHash && i.outputIndex === utxoRef.outputIndex,
+            (i) => i.isSpendInput && i.txHash === utxoRef.txHash && i.outputIndex === utxoRef.outputIndex,
           );
         const paysBuyer = refLookup.details.outputs.some(
           (o) => extractTestnetPaymentKeyHash(o.address) === lockDatum!.buyer,
@@ -746,18 +1000,19 @@ export async function verifyReceipt(
   }
   checks.push(check5);
 
-  // Check 6: Midnight verification (honest boundary per Blueprint §6.8 & T8.3 decision #2).
+  // Check 6: Midnight verification (honest boundary per Blueprint §6.8 & T8.3b Step 11).
   checks.push({
     check: 6,
     name: "Midnight eligibility reference",
     status: "pass",
-    message:
-      "Midnight verification rests on SEYVIXA's signature (independent Midnight proof check is not implemented; issuer is simulated).",
+    message: MIDNIGHT_HONEST_NOTE,
   });
 
   return {
     verdict: deriveVerdict(checks),
     view: receipt.view,
+    fallbackLabel,
+    midnightNote: MIDNIGHT_HONEST_NOTE,
     checks,
   };
 }
