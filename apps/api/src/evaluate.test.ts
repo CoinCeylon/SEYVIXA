@@ -1,6 +1,6 @@
 // T1.2a route tests: POST /api/actions/evaluate (Blueprint 6.2, 7; decisions D17, D36), with Fastify inject.
 // Real Postgres, each test in a rolled-back transaction, real agent credentials and the real owner session.
-// ALLOW and APPROVAL_REQUIRED answer 501 until T1.2b and T1.2c add the action record and the ticket.
+// Read tools answer 501 until T1.2c adds the ticket. Purchase and escrow actions build an action record (T1.2b, actions.test.ts).
 import assert from "node:assert/strict";
 import { Writable } from "node:stream";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -112,16 +112,17 @@ describe("agent callers", () => {
     assert.deepEqual((await events()).map((e) => e.reason_code).sort(), ["GRANT_INTEGRITY_FAILED", "SPEND_LIMIT_EXCEEDED", "TOOL_OUT_OF_SCOPE"]);
   });
 
-  test("a spend at the limit passes the policy; PROPOSE_PURCHASE with no valid total is 400 and records nothing", async () => {
+  test("PROPOSE_PURCHASE with no valid total, or with no stored quote to build the action from, is 400 and records nothing", async () => {
     const server = app();
+    // The policy passes (total at the limit) but there is no stored quote to build the action from (T1.2b): 400.
     const equal = await evaluate(server, { tool: "PROPOSE_PURCHASE", resource: "suppliers/a", parameters: { total_lkr: "120000.00" } }, asAgent());
-    assert.equal(equal.statusCode, 501);
-    assert.equal((await events()).length, 1);
+    assert.equal(equal.statusCode, 400);
+    assert.equal(await actionCount(), 0);
     for (const parameters of [{}, { total_lkr: "abc" }, { total_lkr: 100 }, { total_lkr: "0.00" }]) {
       const response = await evaluate(server, { tool: "PROPOSE_PURCHASE", resource: "suppliers/a", parameters }, asAgent());
       assert.equal(response.statusCode, 400, JSON.stringify(parameters));
     }
-    assert.equal((await events()).length, 1);
+    assert.equal((await events()).length, 0);
   });
 
   test("a deny never reveals grant details", async () => {
@@ -165,20 +166,14 @@ describe("authentication", () => {
 });
 
 describe("owner session caller", () => {
-  test("an escrow action is recorded as APPROVAL_REQUIRED with no agent, and answers 501 for now", async () => {
+  test("an escrow action with nothing to build the action from is 400 and records nothing (the action record is covered in actions.test.ts)", async () => {
     const server = app();
     const cookie = await ownerCookie(server);
     for (const tool of ["ESCROW_LOCK", "ESCROW_RELEASE", "ESCROW_REFUND"]) {
       const response = await evaluate(server, { tool, resource: "budget/x", parameters: {} }, { cookie });
-      assert.equal(response.statusCode, 501, tool);
+      assert.equal(response.statusCode, 400, tool);
     }
-    const rows = await events();
-    assert.equal(rows.length, 3);
-    for (const row of rows) {
-      assert.equal(row.decision, "APPROVAL_REQUIRED");
-      assert.equal(row.reason_code, "APPROVAL_REQUIRED");
-      assert.equal(row.agent_id, null);
-    }
+    assert.equal((await events()).length, 0);
     assert.equal(await actionCount(), 0);
   });
 

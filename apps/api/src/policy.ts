@@ -54,7 +54,7 @@ export function isProtectedResource(resource: string): boolean {
 }
 
 // Decimal LKR string to whole cents, so amounts are compared exactly and never as floats.
-function toCents(amount: string): bigint {
+export function toCents(amount: string): bigint {
   const [whole = "0", fraction = ""] = amount.split(".");
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, "0").slice(0, 2));
 }
@@ -149,3 +149,6 @@ export const DENY_MESSAGES: Record<ReasonCode, string> = {
   TX_MISMATCH: "The transaction does not match the evaluated action.",
   INTERNAL_ERROR: "The request could not be evaluated, so it was denied.",
 };
+
+// D16: one configuration constant, bumped by hand when policy logic changes. Stored on every action.
+export const POLICY_VERSION = "policy-v1";
