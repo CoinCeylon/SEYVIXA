@@ -6,7 +6,7 @@
 //   `/txs/{hash}/utxos` with `collateral`/`reference`, `/txs/{hash}/required_signers` with `witness_hash`)
 //   run through the real `createBlockfrostChainReader`.
 // - Full-view cross-checks, fallback label status, shallow tx UNVERIFIABLE vs 404 REJECTED,
-//   malformed/null 200 JSON responses, fixed known-answer commitment vector, and all 35 mutations.
+//   malformed/null 200 JSON responses, fixed known-answer commitment vector, and the mutation checks listed in T8.3c (see the PR table).
 
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
@@ -33,6 +33,7 @@ import {
   MIDNIGHT_HONEST_NOTE,
   canonicalReceiptPayload,
   computeActionCommitment,
+  verifyCip30OwnerApproval,
   verifyReceipt,
 } from "./verify.ts";
 
@@ -844,5 +845,112 @@ describe("T8.3b — Owner CIP-30 COSE_Sign1 binding, fallback, full-view cross-c
       })).verdict,
       "REJECTED",
     );
+  });
+});
+
+// T8.3c — negative tests for mutants that survived T8.3b (review of PR #41).
+describe("T8.3c — negative tests for surviving mutants (Blueprint 6.5, 6.8)", () => {
+  type Fx = Awaited<ReturnType<typeof makeFixture>>;
+  async function run(fx: Fx, receipt: Record<string, unknown> = fx.receipt) {
+    return verifyReceipt(receipt, fx.receiptKey.fingerprint, {
+      publicKeyDoc: fx.receiptKey.publicKeyDoc,
+      chainReader: fx.chainReader,
+    });
+  }
+  const okStatus = { status: "confirmed" as const, confirmations: 4, blockHeight: 101 };
+
+  it("Check 4 fails on a wrong on-chain commitment and on a wrong receipt salt (kills skip of commitment compare)", async () => {
+    const fxDatum = await makeFixture();
+    fxDatum.txMap.set(LOCK_TX_ID, {
+      kind: "ok",
+      status: { status: "confirmed", confirmations: 5, blockHeight: 100 },
+      details: {
+        ...fxDatum.lockDetails,
+        outputs: [{
+          ...fxDatum.lockDetails.outputs[0],
+          inlineDatumHex: encodeEscrowInlineDatumCbor({ ...fxDatum.datum, actionCommitment: "ab".repeat(32) }),
+        }],
+      },
+    });
+    const r1 = await run(fxDatum);
+    assert.equal(r1.verdict, "REJECTED");
+    assert.equal(r1.checks[3].status, "fail");
+    assert.match(r1.checks[3].message, /does not match on-chain datum/);
+
+    const fxSalt = await makeFixture();
+    const r2 = await run(fxSalt, fxSalt.signReceipt({ ...fxSalt.unsignedReceipt, commitment_salt: "cc".repeat(32) }));
+    assert.equal(r2.verdict, "REJECTED");
+    assert.equal(r2.checks[3].status, "fail");
+    assert.match(r2.checks[3].message, /does not match on-chain datum/);
+  });
+
+  it("full view: payee address must match the datum supplier (kills skip of payee cross-check)", async () => {
+    const fx = await makeFixture({ view: "full" });
+    fx.txMap.set(LOCK_TX_ID, {
+      kind: "ok",
+      status: { status: "confirmed", confirmations: 5, blockHeight: 100 },
+      details: {
+        ...fx.lockDetails,
+        outputs: [{
+          ...fx.lockDetails.outputs[0],
+          inlineDatumHex: encodeEscrowInlineDatumCbor({ ...fx.datum, supplier: "11".repeat(28) }),
+        }],
+      },
+    });
+    const r = await run(fx);
+    assert.equal(r.verdict, "REJECTED");
+    assert.match(JSON.stringify(r.checks), /payee_address does not match on-chain datum supplier/);
+  });
+
+  it("release must carry the buyer as required signer (kills skip of release signer check)", async () => {
+    const fx = await makeFixture({ outcome: "released" });
+    fx.txMap.set(RELEASE_TX_ID, {
+      kind: "ok",
+      status: okStatus,
+      details: { ...fx.releaseDetails, requiredSigners: [] },
+    });
+    const r = await run(fx);
+    assert.equal(r.verdict, "REJECTED");
+    assert.equal(r.checks[4].status, "fail");
+  });
+
+  it("release and refund must spend the escrow as a real input, not as a reference or collateral input (kills isSpendInput skip)", async () => {
+    const fxRel = await makeFixture({ outcome: "released" });
+    fxRel.txMap.set(RELEASE_TX_ID, {
+      kind: "ok",
+      status: okStatus,
+      details: { ...fxRel.releaseDetails, inputs: [{ txHash: LOCK_TX_ID, outputIndex: 0, isSpendInput: false }] },
+    });
+    const rRel = await run(fxRel);
+    assert.equal(rRel.verdict, "REJECTED");
+    assert.match(rRel.checks[4].message, /does not spend escrow UTxO/);
+
+    const fxRef = await makeFixture({ outcome: "refunded" });
+    fxRef.txMap.set(REFUND_TX_ID, {
+      kind: "ok",
+      status: okStatus,
+      details: { ...fxRef.refundDetails, inputs: [{ txHash: LOCK_TX_ID, outputIndex: 0, isSpendInput: false }] },
+    });
+    const rRef = await run(fxRef);
+    assert.equal(rRef.verdict, "REJECTED");
+    assert.match(rRef.checks[4].message, /does not spend escrow UTxO/);
+  });
+
+  it("COSE_Sign1 with a tampered protected header (alg or address) is rejected", async () => {
+    const fx = await makeFixture();
+    const approval = fx.receipt.approval as { signature: string; key: string; owner_key_hash: string };
+    const payload = {
+      domain: "seyvixa-approval-v1",
+      action_hash: fx.receipt.action_hash as string,
+      nonce: approval.nonce as string,
+      expires_at: approval.expires_at as string,
+    };
+    const call = (signature: string) =>
+      verifyCip30OwnerApproval({ payload, signature, key: approval.key, ownerKeyHash: approval.owner_key_hash });
+    assert.equal(await call(approval.signature), true);
+    assert.ok(approval.signature.includes("a30127"), "expected protected header {1:-8,...}");
+    assert.equal(await call(approval.signature.replace("a30127", "a30126")), false);
+    const otherHash = (await unrelatedWalletPromise).keyHash;
+    assert.equal(await call(approval.signature.replace(approval.owner_key_hash, otherHash)), false);
   });
 });
