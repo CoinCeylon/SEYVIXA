@@ -10,6 +10,14 @@ import {
   positiveLkrAmountSchema,
   timestampSchema,
 } from "@seyvixa/shared";
+import {
+  InvalidActionRequest,
+  createsActionRecord,
+  insertActionWithEvent,
+  prepareAction,
+  type EscrowConfig,
+  type PreparedAction,
+} from "./actions.ts";
 import { authenticateAgent, type Queryable } from "./agent-auth.ts";
 import { API_GRANT_ISSUER, checkScopesForNewGrant, createGrant } from "./grants.ts";
 import { DENY_MESSAGES, checkPolicy, isEscrowAction, recordPolicyEvent, type PolicyResult } from "./policy.ts";
@@ -49,6 +57,8 @@ export type AppOptions = {
   // Set the Secure flag on the session cookie. Defaults to true when NODE_ENV is "production".
   secureCookie?: boolean;
   integrityKey: string;
+  // Fixed demo escrow values (T1.2b). Without them, evaluate cannot build an escrow or purchase action and answers 500.
+  escrow?: EscrowConfig;
   logger?: false | { stream?: NodeJS.WritableStream; level?: string };
   now?: () => Date;
 };
@@ -175,19 +185,21 @@ export function buildApp(options: AppOptions): FastifyInstance {
         : await checkPolicy(db, { caller, tool, resource, parameters }, integrityKey, now());
     // An owner caller only ever gets APPROVAL_REQUIRED or a 400 above, so a DENY always has an agent.
     const agentId = caller.kind === "agent" ? caller.agentId : null;
-    await recordPolicyEvent(db, { agentId, tool, resource, result });
-    request.log.info(
-      {
-        event: "policy_decision",
-        decision: result.decision,
-        reason_code: result.decision === "DENY" ? result.reasonCode : undefined,
-        agent_id: agentId,
-        tool,
-      },
-      "policy decision",
-    );
+    const logDecision = () =>
+      request.log.info(
+        {
+          event: "policy_decision",
+          decision: result.decision,
+          reason_code: result.decision === "DENY" ? result.reasonCode : undefined,
+          agent_id: agentId,
+          tool,
+        },
+        "policy decision",
+      );
 
     if (result.decision === "DENY") {
+      await recordPolicyEvent(db, { agentId, tool, resource, result });
+      logDecision();
       const response = gatewayResponseSchema.parse({
         decision: "DENY",
         reason_code: result.reasonCode,
@@ -197,8 +209,38 @@ export function buildApp(options: AppOptions): FastifyInstance {
       });
       return reply.code(200).send(response);
     }
+    // Read tools create no action record; they get their ticket in T1.2c, so they still answer 501.
+    if (!createsActionRecord(tool)) {
+      await recordPolicyEvent(db, { agentId, tool, resource, result });
+      logDecision();
+      return reply.code(501).send({ error: "NOT_IMPLEMENTED" });
+    }
+
+    // T1.2b: build and store the immutable action record (Blueprint 6.5). A request that cannot build a valid
+    // action is a 400 and writes no event and no action, like the other 400s; it never says why.
+    let prepared: PreparedAction;
+    try {
+      prepared = await prepareAction(db, { caller, tool, decision: result.decision, parameters }, options.escrow, now());
+    } catch (error) {
+      if (error instanceof InvalidActionRequest) return reply.code(400).send({ error: "INVALID_REQUEST" });
+      request.log.error({ event: "action_prepare_failed" }, "could not prepare the action");
+      return reply.code(500).send({ error: "INTERNAL_ERROR" });
+    }
+    const actionId = await insertActionWithEvent(db, prepared, { agentId, tool, resource, decision: result.decision }, now());
+    logDecision();
+    if (result.decision === "APPROVAL_REQUIRED") {
+      const response = gatewayResponseSchema.parse({
+        decision: "APPROVAL_REQUIRED",
+        action_id: actionId,
+        action_hash: prepared.actionHash,
+        message: "Owner approval is required for this exact action.",
+      });
+      return reply.code(200).send(response);
+    }
+    // ALLOW: the action is stored as APPROVED, but the single-use ticket arrives in T1.2c. Until then nothing is allowed.
     return reply.code(501).send({ error: "NOT_IMPLEMENTED" });
   });
+
 
   app.post("/api/agents/:id/grants", async (request, reply) => {
     // 1. Authenticate: owner session only. No session, no further work.
