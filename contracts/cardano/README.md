@@ -66,3 +66,18 @@ BLOCKFROST_PROJECT_ID=your-preprod-project-id-here
    - `https://docs.cardano.org/cardano-testnets/tools/faucet/`
    - Select **Preprod Testnet**, paste your `addr_test1...` address, complete verification, and submit.
 4. Wait 1–2 minutes for test ADA to arrive in your wallet.
+
+---
+
+## 5. Build & Test Escrow Validator (T6.3)
+
+From `contracts/cardano/`:
+
+```bash
+aiken check
+aiken build
+aiken address --validator escrow
+```
+
+- **Compiled blueprint:** [`contracts/cardano/plutus.json`](plutus.json) (Plutus V3)
+- **Preprod script address (`escrow`):** `addr_test1wr0slpaxzct7xmln7m0fg3vklf33jkqw4x0fzxze5z473hgyk5pf0`
