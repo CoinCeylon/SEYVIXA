@@ -56,7 +56,7 @@ describe("T8.4 — Demo tamper script (P0-7)", () => {
               txHash: lockTxId,
               validContract: true,
               invalidBeforeSlot: null,
-              inputs: [{ txHash: "11".repeat(32), outputIndex: 0 }],
+              inputs: [{ txHash: "11".repeat(32), outputIndex: 0, isSpendInput: true }],
               outputs: [
                 {
                   address: receipt.chain.script_address,
@@ -77,7 +77,7 @@ describe("T8.4 — Demo tamper script (P0-7)", () => {
               txHash: releaseTxId,
               validContract: true,
               invalidBeforeSlot: null,
-              inputs: [{ txHash: lockTxId, outputIndex: 0 }],
+              inputs: [{ txHash: lockTxId, outputIndex: 0, isSpendInput: true }],
               outputs: [
                 {
                   address: receipt.approved_action.payee_address,

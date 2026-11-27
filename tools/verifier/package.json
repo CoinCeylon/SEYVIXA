@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\" \"tamper/*.test.ts\"",
     "verify": "node src/cli.ts"
   },
   "dependencies": {

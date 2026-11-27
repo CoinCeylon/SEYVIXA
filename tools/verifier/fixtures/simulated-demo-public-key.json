@@ -1,9 +1,9 @@
 {
   "algorithm": "Ed25519",
-  "kid": "417e4349e72f7c30",
-  "fingerprint": "417e4349e72f7c3057c5971616aae980ad8151728a2d9ad717e404aaeca2764e",
-  "public_key_hex": "c24d4cb68c3af61ecfa384cd01850c986162a4f158e79e6b726e5d60cbc9f303",
-  "public_key_base64url": "wk1Mtow69h7Po4TNAYUMmGFipPFY555rcm5dYMvJ8wM",
+  "kid": "096576622915d76a",
+  "fingerprint": "096576622915d76ab5e02d7f0347d969142cb886c40460e403afb0ff257242ce",
+  "public_key_hex": "f6e6ddba6145405fb43ff1a9356eddf0591d1e37307be58989cb6562321f8378",
+  "public_key_base64url": "9ubdumFFQF-0P_GpNW7d8FkdHjcwe-WJictlYjIfg3g",
   "created_at": "2026-11-26T12:15:00.000Z",
   "note": "SIMULATED DEMO PUBLIC KEY ONLY (T8.4 P0-7 fixture). Ephemeral private key was discarded; not a real server key."
 }
