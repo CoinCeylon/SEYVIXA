@@ -191,6 +191,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@seyvixa/budget':
+        specifier: workspace:*
+        version: link:../../services/budget
       '@seyvixa/shared':
         specifier: workspace:*
         version: link:../../packages/shared
