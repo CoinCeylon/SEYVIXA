@@ -201,14 +201,15 @@ describe("ESCROW_LOCK by the owner session", () => {
 });
 
 describe("PROPOSE_PURCHASE by an agent", () => {
-  test("stores an APPROVED record (D15) and binds the matching unclaimed RESERVED reservation (D2b); still 501 until the ticket (T1.2c)", async () => {
+  test("stores an APPROVED record (D15), binds the matching unclaimed RESERVED reservation (D2b) and returns the ticket (T1.2c)", async () => {
     const reservationId = await insertId(
       "INSERT INTO budget_reservations (procurement_id, agent_id, amount, status, idempotency_key) VALUES ($1, $2, 70000.00, 'RESERVED', 'k1') RETURNING id",
       [procurementId, agentId],
     );
     const response = await evaluate(app(), proposeBody(), asAgent());
-    assert.equal(response.statusCode, 501);
-    assert.ok(!response.body.includes("ticket"));
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().decision, "ALLOW");
+    assert.match(response.json().ticket, /^svt_[A-Za-z0-9_-]{43}$/);
     const [row] = await actions();
     assert.equal(row!.status, "APPROVED");
     assert.equal(row!.action_type, "PROPOSE_PURCHASE");

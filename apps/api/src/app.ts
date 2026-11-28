@@ -19,8 +19,9 @@ import {
   type PreparedAction,
 } from "./actions.ts";
 import { authenticateAgent, type Queryable } from "./agent-auth.ts";
+import { createTicket } from "./tickets.ts";
 import { API_GRANT_ISSUER, checkScopesForNewGrant, createGrant } from "./grants.ts";
-import { DENY_MESSAGES, checkPolicy, isEscrowAction, recordPolicyEvent, type PolicyResult } from "./policy.ts";
+import { DENY_MESSAGES, POLICY_VERSION, checkPolicy, isEscrowAction, recordPolicyEvent, type PolicyResult } from "./policy.ts";
 import {
   DEMO_OWNER_ID,
   LoginLimiter,
@@ -226,7 +227,14 @@ export function buildApp(options: AppOptions): FastifyInstance {
       request.log.error({ event: "action_prepare_failed" }, "could not prepare the action");
       return reply.code(500).send({ error: "INTERNAL_ERROR" });
     }
-    const actionId = await insertActionWithEvent(db, prepared, { agentId, tool, resource, decision: result.decision }, now());
+    // T1.2c: an ALLOW gets a short-lived, single-use ticket bound to the action hash, the caller and the policy
+    // version. Only its binding tag is stored; the ticket itself is returned once and never logged. Escrow
+    // actions get theirs when the owner approves (T2.3).
+    const ticket =
+      result.decision === "ALLOW"
+        ? createTicket({ actionHash: prepared.actionHash, caller, policyVersion: POLICY_VERSION }, now())
+        : undefined;
+    const actionId = await insertActionWithEvent(db, prepared, { agentId, tool, resource, decision: result.decision }, now(), ticket);
     logDecision();
     if (result.decision === "APPROVAL_REQUIRED") {
       const response = gatewayResponseSchema.parse({
@@ -237,8 +245,14 @@ export function buildApp(options: AppOptions): FastifyInstance {
       });
       return reply.code(200).send(response);
     }
-    // ALLOW: the action is stored as APPROVED, but the single-use ticket arrives in T1.2c. Until then nothing is allowed.
-    return reply.code(501).send({ error: "NOT_IMPLEMENTED" });
+    const allowed = gatewayResponseSchema.parse({
+      decision: "ALLOW",
+      action_id: actionId,
+      action_hash: prepared.actionHash,
+      ticket: ticket!.ticket,
+      ticket_expires_at: ticket!.expiresAt.toISOString(),
+    });
+    return reply.code(200).send(allowed);
   });
 
 

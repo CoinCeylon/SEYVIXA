@@ -183,12 +183,15 @@ export async function insertActionWithEvent(
   action: PreparedAction,
   event: { agentId: string | null; tool: string; resource: string; decision: string },
   now: Date,
+  // T1.2c: for an ALLOW, the binding tag and expiry of the execution ticket, written with the action.
+  ticket?: { storedNonce: string; expiresAt: Date },
 ): Promise<string> {
   const result = await db.query(
     `WITH a AS (
        INSERT INTO actions (procurement_id, owner_id, action_type, canonical_payload, action_hash,
-                            commitment_salt, status, reservation_id, policy_version, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $14)
+                            commitment_salt, status, reservation_id, policy_version, updated_at,
+                            ticket_nonce, ticket_expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $14, $15, $16)
        RETURNING id
      )
      INSERT INTO policy_events (agent_id, action, decision, reason_code, resource, procurement_id, action_id)
@@ -209,6 +212,8 @@ export async function insertActionWithEvent(
       event.decision,
       event.resource,
       now,
+      ticket?.storedNonce ?? null,
+      ticket?.expiresAt ?? null,
     ],
   );
   return result.rows[0]!.action_id as string;
