@@ -9,6 +9,16 @@ declare module "pg" {
     query(text: string, values?: unknown[]): Promise<QueryResult>;
     end(): Promise<void>;
   }
-  const pg: { Client: typeof Client };
+  export interface PoolClient {
+    query(text: string, values?: unknown[]): Promise<QueryResult>;
+    release(): void;
+  }
+  export class Pool {
+    constructor(config?: { connectionString?: string });
+    connect(): Promise<PoolClient>;
+    query(text: string, values?: unknown[]): Promise<QueryResult>;
+    end(): Promise<void>;
+  }
+  const pg: { Client: typeof Client; Pool: typeof Pool };
   export default pg;
 }

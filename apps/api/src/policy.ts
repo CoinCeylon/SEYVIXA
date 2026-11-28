@@ -8,12 +8,16 @@ import { PROTECTED_RESOURCE, loadValidGrant, resourceScopeMatches } from "./gran
 
 // Tool scope each agent action type needs (D30). Escrow actions have no scope on purpose: no grant can
 // carry one, so an agent can never ask for them (Blueprint 6.1).
+// BUDGET_RESERVE is not an action type (D17): only POST /api/budget/reservations (D2, T4.1b) uses it, so evaluate
+// can never be called with it (the request schema only accepts action types).
+export const BUDGET_RESERVE_TOOL = "BUDGET_RESERVE";
 export const TOOL_ACTION_SCOPE = {
   SUPPLIER_SEARCH: "supplier:search",
   QUOTE_READ: "quote:read",
   FILE_READ: "file:read",
   PROPOSE_PURCHASE: "proposal:prepare",
-} as const satisfies Partial<Record<ActionType, string>>;
+  [BUDGET_RESERVE_TOOL]: "budget:reserve",
+} as const satisfies Partial<Record<ActionType | typeof BUDGET_RESERVE_TOOL, string>>;
 
 // Owner-initiated actions. They need approval (D17) and are never allowed for an agent.
 export const ESCROW_ACTION_TYPES = ["ESCROW_LOCK", "ESCROW_RELEASE", "ESCROW_REFUND"] as const;
@@ -26,7 +30,7 @@ export type PolicyCaller = { kind: "agent"; agentId: string } | { kind: "owner";
 
 export type PolicyInput = {
   caller: PolicyCaller;
-  tool: ActionType;
+  tool: ActionType | typeof BUDGET_RESERVE_TOOL;
   resource: string;
   parameters: Record<string, unknown>;
 };
@@ -89,6 +93,11 @@ async function checkAgent(
     const total = positiveLkrAmountSchema.parse(input.parameters.total_lkr);
     if (toCents(total) > toCents(spendLimit)) return deny("SPEND_LIMIT_EXCEEDED");
   }
+  if (input.tool === BUDGET_RESERVE_TOOL) {
+    // D2 item (b): the reserved amount counts against the grant's spend limit. The route validates it first (400).
+    const amount = positiveLkrAmountSchema.parse(input.parameters.amount_lkr);
+    if (toCents(amount) > toCents(spendLimit)) return deny("SPEND_LIMIT_EXCEEDED");
+  }
   return { decision: "ALLOW" };
 }
 
@@ -115,12 +124,12 @@ export async function checkPolicy(
 // action_id is NULL here: the action record arrives in T1.2b. procurement_id is NULL until T1.5.
 export async function recordPolicyEvent(
   db: Queryable,
-  event: { agentId: string | null; tool: string; resource: string; result: PolicyResult },
+  event: { agentId: string | null; tool: string; resource: string; result: PolicyResult; procurementId?: string | null },
 ): Promise<void> {
   const reason = event.result.decision === "DENY" ? event.result.reasonCode : event.result.decision;
   await db.query(
-    "INSERT INTO policy_events (agent_id, action, decision, reason_code, resource) VALUES ($1, $2, $3, $4, $5)",
-    [event.agentId, event.tool, event.result.decision, reason, event.resource],
+    "INSERT INTO policy_events (agent_id, action, decision, reason_code, resource, procurement_id) VALUES ($1, $2, $3, $4, $5, $6)",
+    [event.agentId, event.tool, event.result.decision, reason, event.resource, event.procurementId ?? null],
   );
 }
 

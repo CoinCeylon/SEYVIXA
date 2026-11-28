@@ -9,6 +9,7 @@ import {
   idSchema,
   positiveLkrAmountSchema,
   timestampSchema,
+  type ReasonCode,
 } from "@seyvixa/shared";
 import {
   InvalidActionRequest,
@@ -18,10 +19,19 @@ import {
   type EscrowConfig,
   type PreparedAction,
 } from "./actions.ts";
+import { BudgetGuardError, type BudgetGuard } from "@seyvixa/budget";
 import { authenticateAgent, type Queryable } from "./agent-auth.ts";
 import { createTicket } from "./tickets.ts";
 import { API_GRANT_ISSUER, checkScopesForNewGrant, createGrant } from "./grants.ts";
-import { DENY_MESSAGES, POLICY_VERSION, checkPolicy, isEscrowAction, recordPolicyEvent, type PolicyResult } from "./policy.ts";
+import {
+  BUDGET_RESERVE_TOOL,
+  DENY_MESSAGES,
+  POLICY_VERSION,
+  checkPolicy,
+  isEscrowAction,
+  recordPolicyEvent,
+  type PolicyResult,
+} from "./policy.ts";
 import {
   DEMO_OWNER_ID,
   LoginLimiter,
@@ -46,6 +56,12 @@ const createGrantBody = z.strictObject({
   expires_at: timestampSchema,
 });
 const paramsSchema = z.strictObject({ id: idSchema });
+// POST /api/budget/reservations (D2, T4.1b). The agent comes from the credential, never from the body.
+const reserveBody = z.strictObject({
+  procurement_id: idSchema,
+  amount_lkr: positiveLkrAmountSchema,
+  idempotency_key: z.string().min(1).max(128),
+});
 // Login body: strict, so no owner_id (or anything else) can ride along.
 const loginBody = z.strictObject({ login: z.string().min(1).max(256), password: z.string().min(1).max(256) });
 
@@ -60,6 +76,8 @@ export type AppOptions = {
   integrityKey: string;
   // Fixed demo escrow values (T1.2b). Without them, evaluate cannot build an escrow or purchase action and answers 500.
   escrow?: EscrowConfig;
+  // The budget guard (T4.1a) for POST /api/budget/reservations. Without it that route answers 500.
+  budget?: BudgetGuard;
   logger?: false | { stream?: NodeJS.WritableStream; level?: string };
   now?: () => Date;
 };
@@ -255,6 +273,108 @@ export function buildApp(options: AppOptions): FastifyInstance {
     return reply.code(200).send(allowed);
   });
 
+
+  // Budget reservation (T4.1b, Blueprint 6.1, 6.4, 7; decisions D2, D2b, D4). Database only: no evaluate or execute and
+  // no ticket. It authenticates the agent credential (no owner session), runs the same checkPolicy as evaluate
+  // for the tool BUDGET_RESERVE (agent active, grant valid, scope budget:reserve, resource budget/<procurement id>,
+  // spend limit against the amount), writes a policy_events row before the response, then asks the BudgetGuard
+  // to reserve. A decision is data: every refusal answers 200 with the Blueprint 6.2 DENY body. The stored
+  // idempotency key is "<agent id>:<client key>", so one agent can never collide with or read another agent's
+  // key. A request that cannot be served (another owner's procurement, a key reused for a different request)
+  // is a 400 that never says why. Nothing from the body is logged.
+  app.post("/api/budget/reservations", async (request, reply) => {
+    if (request.headers.authorization === undefined) return reply.code(401).send({ error: "UNAUTHENTICATED" });
+    const auth = await authenticateAgent(request, db);
+    let agentId: string;
+    let inactive = false;
+    if (auth.ok) agentId = auth.agentId;
+    else if (auth.kind === "AGENT_INACTIVE") {
+      agentId = auth.agentId;
+      inactive = true;
+    } else return reply.code(401).send({ error: "UNAUTHENTICATED" });
+
+    const body = reserveBody.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: "INVALID_REQUEST" });
+    const procurementId = body.data.procurement_id.toLowerCase();
+    const amount = body.data.amount_lkr;
+    const resource = `budget/${procurementId}`;
+    const procurement = await db.query("SELECT owner_id FROM procurements WHERE id = $1", [procurementId]);
+    const procurementOwner = procurement.rows[0]?.owner_id as string | undefined;
+    // The event row may only point at a procurement that exists.
+    const eventProcurementId = procurementOwner === undefined ? null : procurementId;
+
+    const result: PolicyResult = inactive
+      ? { decision: "DENY", reasonCode: "AGENT_INACTIVE" }
+      : await checkPolicy(
+          db,
+          { caller: { kind: "agent", agentId }, tool: BUDGET_RESERVE_TOOL, resource, parameters: { procurement_id: procurementId, amount_lkr: amount } },
+          integrityKey,
+          now(),
+        );
+    const deny = (reasonCode: ReasonCode) =>
+      reply.code(200).send(
+        gatewayResponseSchema.parse({
+          decision: "DENY",
+          reason_code: reasonCode,
+          agent_id: agentId,
+          requested_resource: resource,
+          message: DENY_MESSAGES[reasonCode],
+        }),
+      );
+    const logDecision = (decision: string, reasonCode?: string) =>
+      request.log.info({ event: "policy_decision", decision, reason_code: reasonCode, agent_id: agentId, tool: BUDGET_RESERVE_TOOL }, "policy decision");
+
+    if (result.decision !== "ALLOW") {
+      // checkPolicy only returns ALLOW or DENY for an agent caller.
+      const reasonCode: ReasonCode = result.decision === "DENY" ? result.reasonCode : "INTERNAL_ERROR";
+      await recordPolicyEvent(db, {
+        agentId,
+        tool: BUDGET_RESERVE_TOOL,
+        resource,
+        result: { decision: "DENY", reasonCode },
+        procurementId: eventProcurementId,
+      });
+      logDecision("DENY", reasonCode);
+      return deny(reasonCode);
+    }
+
+    // Allowed by policy: now the request itself must be servable. The procurement must exist and belong to the
+    // owner who granted this agent. Anything else is a plain 400 and writes nothing.
+    if (options.budget === undefined) return reply.code(500).send({ error: "INTERNAL_ERROR" });
+    if (procurementOwner === undefined) return reply.code(400).send({ error: "INVALID_REQUEST" });
+    const grant = await db.query("SELECT 1 FROM agent_grants WHERE agent_id = $1 AND owner_id = $2", [agentId, procurementOwner]);
+    if (grant.rows.length === 0) return reply.code(400).send({ error: "INVALID_REQUEST" });
+
+    // Audit first (the policy decision), then the state change. If the budget then refuses, a second row says so.
+    await recordPolicyEvent(db, { agentId, tool: BUDGET_RESERVE_TOOL, resource, result, procurementId: procurementId });
+    logDecision("ALLOW");
+    let reserved;
+    try {
+      reserved = await options.budget.reserve(procurementId, agentId, amount, `${agentId}:${body.data.idempotency_key}`);
+    } catch (error) {
+      if (error instanceof BudgetGuardError) return reply.code(400).send({ error: "INVALID_REQUEST" });
+      request.log.error({ event: "budget_reserve_failed" }, "could not reserve budget");
+      return reply.code(500).send({ error: "INTERNAL_ERROR" });
+    }
+    if (!reserved.ok) {
+      await recordPolicyEvent(db, {
+        agentId,
+        tool: BUDGET_RESERVE_TOOL,
+        resource,
+        result: { decision: "DENY", reasonCode: reserved.code },
+        procurementId,
+      });
+      logDecision("DENY", reserved.code);
+      return deny(reserved.code);
+    }
+    return reply.code(200).send({
+      reservation_id: reserved.reservation.id,
+      procurement_id: reserved.reservation.procurementId,
+      amount_lkr: reserved.reservation.amountLkr,
+      status: reserved.reservation.status,
+      repeated: reserved.repeated,
+    });
+  });
 
   app.post("/api/agents/:id/grants", async (request, reply) => {
     // 1. Authenticate: owner session only. No session, no further work.
