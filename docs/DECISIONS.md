@@ -78,6 +78,15 @@ Format: date, decision, reason, who. The Blueprint wins over the guide. Changes 
 | D48 | Migration `0002_action_record_hardening.sql` (T1.2b). It adds nullable `suppliers.payee_address text`, a trigger that rejects any update of `canonical_payload`, `action_hash`, `commitment_salt`, `owner_id`, `procurement_id`, `action_type` or `policy_version` on `actions`, and a unique index so one reservation binds to at most one action. `status`, ticket and result columns stay updatable. `payee_address` is an additive column that is not in Section 8. | Blueprint 6.2: actions are immutable. Section 8 has no place for the payee address (D29 needs one). |
 
 
+## 2026-11-28 — Execution ticket (T1.2c, decided by Abdul)
+
+| # | Decision | Reason |
+|---|---|---|
+| D49 | Execution ticket (T1.2c, `apps/api/src/tickets.ts`). The ticket is `svt_` plus 32 random bytes in base64url and is valid for 5 minutes (a constant in the code). It is shown once in the evaluate response and never logged. The database stores only a binding tag in the existing `actions.ticket_nonce`: the SHA-256 of the ticket, the action hash, the caller (`agent:<id>` or `owner:<id>`) and the policy version stored on the action. There is no new column. `validateTicket` is read-only and returns `TICKET_INVALID` (unknown action, no ticket, wrong ticket, another caller, another action or another policy version, with no hint which), `TICKET_USED` or `TICKET_EXPIRED` (at or after the expiry). | Blueprint 6.2: a short-lived, single-use ticket bound to the action hash, the caller and the policy version. The Section 8 table has no caller or used column. |
+| D50 | Single use (T1.2c). `TICKET_USED` means the ticket matches but the action status is no longer `APPROVED`. The execute transition (T1.3) consumes the ticket by moving the action from `APPROVED` to `EXECUTING` under a row lock (`WHERE status = 'APPROVED'`). Execute also compares the action's stored policy version with the current `POLICY_VERSION` (D16). | A used marker needs no new column, and the transition already has to be atomic (Blueprint 6.2). |
+| D51 | Read tools (`SUPPLIER_SEARCH`, `QUOTE_READ`, `FILE_READ`) create no action row, so they get no ticket and evaluate still answers 501 for them. `actions.procurement_id` is not null and the action payload in D29 is a purchase. Their payload and ticket are decided with the connectors card (T1.4). This is a known gap against the Blueprint text "for an ALLOW it stores an immutable action record ... and returns a ... ticket". | The read-tool payload was never defined. |
+| D52 | Tickets for escrow actions (T1.2c). Evaluate returns `APPROVAL_REQUIRED` with no ticket. The ticket is created when the owner's approval is verified (T2.3, which calls `createTicket` for the owner session caller). `ALLOW` for `PROPOSE_PURCHASE` returns its ticket from evaluate. | The Blueprint ties execution of an approval-required action to a valid approval, so the ticket follows the approval. |
+
 ## Team log entries from the earlier log format (Afnan: T6.1, T5.2, T5.7)
 
 | ID | Decision | Reason / Context |
