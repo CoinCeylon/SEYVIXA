@@ -47,10 +47,10 @@ The application provides exactly three connected screens sharing a single naviga
 
 ## Receipt Signing Key Fingerprint (T8.2, Blueprint §6.8)
 
-SEYVIXA signs verifiable receipts with a single Ed25519 key pair (public key committed at `keys/receipt-signing-public.json`; private key stays in server `.env` only and is never committed).
+SEYVIXA signs verifiable receipts with a single Ed25519 key pair (public key committed at `keys/receipt-signing-public.json`). `tools/keygen/generate-receipt-key.mjs` writes the private key (`RECEIPT_SIGNING_PRIVATE_KEY`, PKCS#8 DER base64url) to the single git-ignored `.env` path you pass; file mode settings do not protect `.env` on Windows, and protecting `.env` is the owner's responsibility.
 
 - **Algorithm:** `Ed25519`
 - **Trusted Fingerprint (SHA-256 of raw 32-byte public key):** `3a21702b80f00a29165a1f101ad56446372c35299a9179dcfaea9ced70a75bba`
 - **Key ID (`kid`, first 16 hex chars):** `3a21702b80f00a29`
 - **Published date:** `2026-11-26`
-- **Policy:** Do not regenerate after publication. Copy the fingerprint above (and from the submission slide/documentation) into `--trusted-fingerprint` when running `tools/verifier`.
+- **Policy:** Do not regenerate after publication. Copy the fingerprint above into `--trusted-fingerprint` when running `tools/verifier`. *(A second independent publication location per Blueprint §6.8 is still open and owned by Abdul.)*
